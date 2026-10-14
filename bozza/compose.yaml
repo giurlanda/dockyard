@@ -1,0 +1,54 @@
+# Claude Code Launcher – stack principale
+# Avvio:  docker compose up -d --build
+# Prima:  docker build -t claude-project:latest ./project-image
+
+services:
+  # Unico servizio che vede il docker.sock reale, in sola lettura.
+  # Espone al launcher solo le API abilitate qui sotto.
+  socket-proxy:
+    image: tecnativa/docker-socket-proxy:latest
+    restart: unless-stopped
+    environment:
+      CONTAINERS: 1
+      IMAGES: 1
+      VOLUMES: 1
+      NETWORKS: 1
+      EXEC: 1
+      POST: 1        # consente create/start/stop/delete sulle API sopra
+      # tutto il resto (SWARM, SERVICES, SECRETS, BUILD, PLUGINS, ...) resta 0
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    networks: [control]
+
+  launcher:
+    build: ./launcher
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      DOCKER_HOST: tcp://socket-proxy:2375
+      DATA_DIR: /data
+    volumes:
+      - launcher-data:/data
+    networks: [control, edge]
+    depends_on: [socket-proxy]
+
+  cloudflared:
+    image: cloudflare/cloudflared:latest
+    restart: unless-stopped
+    command: tunnel --no-autoupdate run
+    environment:
+      TUNNEL_TOKEN: ${CLOUDFLARE_TUNNEL_TOKEN}
+    networks: [edge]
+    depends_on: [launcher]
+
+networks:
+  # launcher <-> socket-proxy, senza accesso a internet
+  control:
+    internal: true
+  # launcher <-> cloudflared (+ internet per le chiavi di Cloudflare Access)
+  edge: {}
+  # NB: la rete "projects-net" dei progetti la crea il launcher all'avvio,
+  # così nessun servizio di questo stack ne fa parte.
+
+volumes:
+  launcher-data:

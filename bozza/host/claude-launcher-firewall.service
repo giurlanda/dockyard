@@ -1,0 +1,22 @@
+# /etc/systemd/system/claude-launcher-firewall.service
+# Riapplica le regole di host/block-lan.sh a ogni avvio, dopo Docker.
+#
+#   sudo cp host/block-lan.sh /usr/local/sbin/claude-block-lan.sh
+#   sudo chmod 755 /usr/local/sbin/claude-block-lan.sh
+#   sudo cp host/claude-launcher-firewall.service /etc/systemd/system/
+#   sudo systemctl daemon-reload && sudo systemctl enable --now claude-launcher-firewall
+
+[Unit]
+Description=Claude Launcher: isola i container di progetto dalla LAN
+After=docker.service
+Requires=docker.service
+
+[Service]
+Type=oneshot
+# Esempio di eccezione per un GitLab self-hosted in LAN:
+# Environment=ALLOW_IPS=192.168.1.50
+ExecStart=/usr/local/sbin/claude-block-lan.sh
+RemainAfterExit=yes
+
+[Install]
+WantedBy=multi-user.target
