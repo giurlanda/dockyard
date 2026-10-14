@@ -1,0 +1,21 @@
+{% extends "base.html" %}
+{% block title %}{{ t("dashboard.title") }}{% endblock %}
+{% block header %}
+  <div class="who">
+    <span data-testid="user-email">{{ user.email }}</span>
+    <span class="badge" data-testid="user-role">{{ t("role." ~ user.role) }}</span>
+    <form class="languages" method="post" action="/language" aria-label="{{ t('language.label') }}">
+      <input type="hidden" name="next" value="{{ path }}">
+      {% for code, name in languages.items() %}
+        <button name="lang" value="{{ code }}" lang="{{ code }}"
+                aria-pressed="{{ 'true' if code == lang else 'false' }}">{{ name }}</button>
+      {% endfor %}
+    </form>
+  </div>
+{% endblock %}
+{% block content %}
+  <section class="panel">
+    <h2>{{ t("projects.heading") }}</h2>
+    <p class="muted">{{ t("projects.empty") }}</p>
+  </section>
+{% endblock %}

@@ -1,0 +1,48 @@
+# Dockyard. Copy .env.example to .env, fill it in, then: docker compose up -d
+# Put your authentication proxy (Cloudflare Access) in front of 127.0.0.1:${DOCKYARD_PORT}.
+name: dockyard
+
+services:
+  # The only service that sees the Docker socket, read-only. It lets through only the Docker API
+  # sections Dockyard needs; everything else is refused.
+  socket-proxy:
+    image: tecnativa/docker-socket-proxy:v0.5.0
+    restart: unless-stopped
+    environment:
+      CONTAINERS: 1
+      IMAGES: 1
+      VOLUMES: 1
+      NETWORKS: 1
+      EXEC: 1
+      BUILD: 1
+      POST: 1
+      EVENTS: 0
+      # PING and VERSION stay on (their default): Docker clients need them to connect.
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    networks: [docker-api]
+
+  dockyard:
+    build: .
+    restart: unless-stopped
+    environment:
+      DOCKER_HOST: tcp://socket-proxy:2375
+      DOCKYARD_SECRET_KEY: ${DOCKYARD_SECRET_KEY:-}
+      DOCKYARD_FIRST_ADMINISTRATOR_EMAIL: ${DOCKYARD_FIRST_ADMINISTRATOR_EMAIL:-}
+      DOCKYARD_CF_ACCESS_TEAM: ${DOCKYARD_CF_ACCESS_TEAM:-}
+      DOCKYARD_CF_ACCESS_AUD: ${DOCKYARD_CF_ACCESS_AUD:-}
+    volumes:
+      - dockyard-data:/data
+    ports:
+      - "127.0.0.1:${DOCKYARD_PORT:-8000}:8000"
+    # docker-api reaches the socket proxy; default reaches the internet (Cloudflare signing keys).
+    networks: [docker-api, default]
+    depends_on: [socket-proxy]
+
+networks:
+  # No internet, no published ports: only Dockyard and the socket proxy are on it.
+  docker-api:
+    internal: true
+
+volumes:
+  dockyard-data:

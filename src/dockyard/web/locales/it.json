@@ -1,0 +1,17 @@
+{
+  "role.administrator": "Amministratore",
+  "role.user": "Utente",
+  "dashboard.title": "Dashboard",
+  "projects.heading": "Progetti",
+  "projects.empty": "Non hai ancora nessun Progetto.",
+  "language.label": "Lingua",
+  "refused.unauthenticated.title": "Accesso richiesto",
+  "refused.unauthenticated.body": "Dockyard è raggiungibile solo attraverso il suo proxy di autenticazione. Aprilo dall'indirizzo che ti ha dato il tuo Amministratore.",
+  "refused.not_invited.title": "Invito mancante",
+  "refused.not_invited.body": "L'email {email} è stata verificata dal proxy di autenticazione, ma non ha ricevuto un Invito per questa Istanza di Dockyard. Chiedi a un Amministratore di invitarti.",
+  "refused.identity_unavailable.title": "Identità non verificabile",
+  "refused.identity_unavailable.body": "Al momento Dockyard non riesce a verificare chi sei, perché non raggiunge il proxy di autenticazione. Riprova tra qualche minuto; se succede ancora, avvisa il tuo Amministratore.",
+  "not_found.title": "Pagina non trovata",
+  "not_found.body": "Questa pagina non esiste.",
+  "notice.home": "Torna alla dashboard"
+}

@@ -1,0 +1,17 @@
+{
+  "role.administrator": "Administrator",
+  "role.user": "User",
+  "dashboard.title": "Dashboard",
+  "projects.heading": "Projects",
+  "projects.empty": "You have no Projects yet.",
+  "language.label": "Language",
+  "refused.unauthenticated.title": "Sign-in required",
+  "refused.unauthenticated.body": "Dockyard can only be reached through its authentication proxy. Open it from the address your Administrator gave you.",
+  "refused.not_invited.title": "Not invited",
+  "refused.not_invited.body": "The email {email} has been verified by the authentication proxy, but it has not been invited to this Dockyard Instance. Ask an Administrator to invite you.",
+  "refused.identity_unavailable.title": "Identity cannot be verified",
+  "refused.identity_unavailable.body": "Dockyard cannot verify who you are right now, because it cannot reach the authentication proxy. Try again in a few minutes; if it keeps happening, tell your Administrator.",
+  "not_found.title": "Page not found",
+  "not_found.body": "This page does not exist.",
+  "notice.home": "Back to the dashboard"
+}

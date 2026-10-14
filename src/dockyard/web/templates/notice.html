@@ -1,0 +1,9 @@
+{% extends "base.html" %}
+{% block title %}{{ t(key ~ ".title") }}{% endblock %}
+{% block content %}
+  <section class="panel notice">
+    <h1>{{ t(key ~ ".title") }}</h1>
+    <p>{{ t(key ~ ".body", **params) }}</p>
+    {% if home %}<p><a href="/">{{ t("notice.home") }}</a></p>{% endif %}
+  </section>
+{% endblock %}

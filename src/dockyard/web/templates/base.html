@@ -1,0 +1,18 @@
+<!doctype html>
+<html lang="{{ lang }}">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{% block title %}{% endblock %} · Dockyard</title>
+<style>{% include "_style.css" %}</style>
+</head>
+<body>
+<header class="topbar">
+  <span class="brand">Dockyard</span>
+  {% block header %}{% endblock %}
+</header>
+<main>
+{% block content %}{% endblock %}
+</main>
+</body>
+</html>
