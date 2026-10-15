@@ -1,0 +1,44 @@
+{% extends "base.html" %}
+{% block title %}{{ shown.email }}{% endblock %}
+{% block header %}{% include "_user.html" %}{% endblock %}
+{% block content %}
+  <section class="panel">
+    <div class="panel-heading">
+      <h1>{{ shown.email }}</h1>
+      <span class="badge" data-testid="shown-role">{{ t("role." ~ shown.role) }}</span>
+    </div>
+    {% if changed %}<p class="outcome good" role="status">{{ t("user.changed." ~ changed, email=shown.email) }}</p>{% endif %}
+    {% if problem %}<p class="outcome bad" role="alert">{{ t(problem) }}</p>{% endif %}
+    <p><a href="/users">{{ t("users.back") }}</a></p>
+  </section>
+  <section class="panel" aria-labelledby="role">
+    <h2 id="role">{{ t("user.role.heading") }}</h2>
+    <p class="muted">{{ t("user.role." ~ shown.role) }}</p>
+    <form method="post" action="/users/{{ shown.email|urlencode }}/role">
+      {% if shown.role == "administrator" %}
+        <input type="hidden" name="role" value="user">
+        <button>{{ t("user.demote") }}</button>
+      {% else %}
+        <input type="hidden" name="role" value="administrator">
+        <button class="primary">{{ t("user.promote") }}</button>
+      {% endif %}
+    </form>
+  </section>
+  <section class="panel" aria-labelledby="remove">
+    <h2 id="remove">{{ t("user.remove.heading") }}</h2>
+    <p class="warning">{{ t("user.remove.explain") }}</p>
+    {% if projects %}
+      <p>{{ t("user.remove.projects") }}</p>
+      <ul class="used-by" aria-label="{{ t('user.remove.projects') }}">
+        {% for project in projects %}<li>{{ project.name }}</li>{% endfor %}
+      </ul>
+    {% else %}
+      <p class="muted">{{ t("user.remove.no_projects") }}</p>
+    {% endif %}
+    <form method="post" action="/users/{{ shown.email|urlencode }}/remove">
+      <label class="check"><input type="checkbox" name="confirm" required>
+        {{ t("user.remove.confirm") }}</label>
+      <div class="actions"><button class="danger">{{ t("user.remove.button") }}</button></div>
+    </form>
+  </section>
+{% endblock %}

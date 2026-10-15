@@ -176,6 +176,13 @@ class FakeRuntime:
         if login:
             login.end()
 
+    def remove_claude_account(self, user: str) -> None:
+        self.stop_login_environment(user)
+        with self._lock:
+            self._signed_in.discard(user)
+            self._trusted.pop(user, None)
+            self._remote_control.pop(user, None)
+
     def start_clone(
         self, user: str, project: str, repository: str, *, credential: GitToken | None = None
     ) -> None:

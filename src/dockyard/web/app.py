@@ -25,10 +25,11 @@ from ..runtime import Runtime, RuntimeUnavailable
 from ..settings import Settings
 from .claude_account import claude_account_routes, claude_account_status
 from .git_credentials import git_credentials_routes
-from .guard import CurrentUser, IdentityGuard
+from .guard import CurrentUser, IdentityGuard, NotAdministrator
 from .i18n import LANGUAGE_COOKIE, Language
 from .pages import Pages, is_api
 from .projects import projects_routes
+from .users import users_routes
 
 ONE_YEAR = 365 * 24 * 3600
 
@@ -72,6 +73,11 @@ def create_app(
         error_name = "runtime_unavailable"
         return pages.problem(request, error_name, key=error_name, status_code=503)
 
+    @app.exception_handler(NotAdministrator)
+    async def not_administrator(request: Request, error: NotAdministrator) -> Response:
+        error_name = "administrator_only"
+        return pages.problem(request, error_name, key=error_name, status_code=403)
+
     @app.exception_handler(RequestValidationError)
     async def invalid_request(request: Request, error: RequestValidationError) -> Response:
         # What was wrong, never what was sent: it may hold a Git Credential's token.
@@ -110,6 +116,7 @@ def create_app(
     app.include_router(claude_account_routes(runtime, projects, pages))
     app.include_router(projects_routes(projects, git_credentials, pages))
     app.include_router(git_credentials_routes(git_credentials, pages))
+    app.include_router(users_routes(accounts, projects, runtime, pages))
     app.mount("/static", StaticFiles(packages=[("dockyard.web", "static")]), name="static")
     return app
 

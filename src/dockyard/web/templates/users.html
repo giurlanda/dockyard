@@ -1,0 +1,50 @@
+{% extends "base.html" %}
+{% block title %}{{ t("users.title") }}{% endblock %}
+{% block header %}{% include "_user.html" %}{% endblock %}
+{% block content %}
+  <section class="panel" aria-labelledby="invite">
+    <h1 id="invite">{{ t("users.invite.heading") }}</h1>
+    {% if problem %}<p class="outcome bad" role="alert">{{ t(problem) }}</p>{% endif %}
+    <form class="fields" method="post" action="/invitations">
+      <div class="field">
+        <label for="email">{{ t("users.invite.email") }}</label>
+        <input id="email" name="email" type="email" value="{{ email }}" maxlength="254"
+               autocomplete="off" autocapitalize="off" spellcheck="false"
+               aria-describedby="email-hint" required>
+        <p class="hint muted" id="email-hint">{{ t("users.invite.hint") }}</p>
+      </div>
+      <div class="actions"><button class="primary">{{ t("users.invite.button") }}</button></div>
+    </form>
+  </section>
+  <section class="panel" aria-labelledby="invitations">
+    <h2 id="invitations">{{ t("users.invitations.heading") }}</h2>
+    {% if invitations %}
+      <ul class="projects">
+        {% for invitation in invitations %}
+          <li>
+            <span>{{ invitation.email }}</span>
+            <form method="post" action="/invitations/{{ invitation.email|urlencode }}/revoke">
+              <button aria-label="{{ t('users.invitations.revoke_email', email=invitation.email) }}">
+                {{ t("users.invitations.revoke") }}</button>
+            </form>
+          </li>
+        {% endfor %}
+      </ul>
+    {% else %}
+      <p class="muted">{{ t("users.invitations.empty") }}</p>
+    {% endif %}
+  </section>
+  <section class="panel" aria-labelledby="users">
+    <h2 id="users">{{ t("users.heading") }}</h2>
+    <ul class="projects">
+      {% for listed in users %}
+        <li>
+          <a href="/users/{{ listed.email|urlencode }}">{{ listed.email }}</a>
+          <span class="badge">{{ t("role." ~ listed.role) }}</span>
+          {% if listed.email == user.email %}<span class="muted">{{ t("users.you") }}</span>{% endif %}
+        </li>
+      {% endfor %}
+    </ul>
+    <p><a href="/">{{ t("notice.home") }}</a></p>
+  </section>
+{% endblock %}

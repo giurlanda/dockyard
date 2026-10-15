@@ -89,7 +89,7 @@ button.danger { border-color: var(--bad); color: var(--bad); }
 .fields { display: grid; gap: 16px; }
 .field { margin: 0; padding: 0; border: 0; min-width: 0; }
 .field label, .field legend { display: block; font-weight: 600; margin-bottom: 4px; padding: 0; }
-.field input:not([type]), .field input[type="password"] {
+.field input:not([type]), .field input[type="password"], .field input[type="email"] {
   width: 100%; font: inherit; padding: 6px 10px; border-radius: 6px;
   border: 1px solid var(--line); background: var(--bg); color: var(--ink);
 }

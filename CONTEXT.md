@@ -13,7 +13,7 @@ One installation of Dockyard on the hardware of a team or a person, with its own
 _Avoid_: server, deployment, tenant
 
 **User** (Utente):
-A person registered on an Instance, owner of their own Projects and Git Credentials.
+A person registered on an Instance, owner of their own Projects and Git Credentials. Removing a User deletes everything they own on the Instance, their Claude Account included.
 _Avoid_: account, customer, owner
 
 **Administrator** (Amministratore):
@@ -21,7 +21,7 @@ A User who manages the Instance: Users, limits and dangerous settings. Whoever i
 _Avoid_: admin, superuser, root
 
 **Invitation** (Invito):
-An Administrator registering a person's email; without an Invitation nobody becomes a User, even if the authentication proxy lets them through.
+An Administrator registering a person's email; without an Invitation nobody becomes a User, even if the authentication proxy lets them through. It is used up when the person first reaches the Instance and becomes a User.
 
 **Claude Account** (Account Claude):
 The claude.ai subscription a User connects, shared by all of that User's Projects and never visible to other Users.

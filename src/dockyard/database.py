@@ -72,6 +72,13 @@ MIGRATIONS = (
     ALTER TABLE projects ADD COLUMN git_credential TEXT REFERENCES git_credentials (id);
     CREATE INDEX projects_git_credential ON projects (git_credential);
     """,
+    # An invited email becomes a User, and loses its Invitation, on its first access.
+    """
+    CREATE TABLE invitations (
+        email      TEXT PRIMARY KEY,
+        created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
+    );
+    """,
 )
 
 

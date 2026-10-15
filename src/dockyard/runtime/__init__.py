@@ -144,6 +144,11 @@ class Runtime(Protocol):
 
     def stop_login_environment(self, user: str) -> None: ...
 
+    def remove_claude_account(self, user: str) -> None:
+        """Forget the User's Claude Account for good: end their login environment and remove
+        their Claude config, credentials included. Their Projects must be removed first."""
+        ...
+
     def start_clone(
         self, user: str, project: str, repository: str, *, credential: GitToken | None = None
     ) -> None:

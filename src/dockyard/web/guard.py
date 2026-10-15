@@ -17,7 +17,7 @@ from starlette.requests import HTTPConnection
 from starlette.responses import Response
 from starlette.types import ASGIApp, Receive, Scope, Send
 
-from ..accounts import Accounts, User
+from ..accounts import Accounts, Role, User
 from ..identity import Identity, IdentityUnavailable
 
 
@@ -100,7 +100,7 @@ class IdentityGuard:
             return Refused(Refusal.IDENTITY_UNAVAILABLE)
         if email is None:
             return Refused(Refusal.UNAUTHENTICATED)
-        return self._accounts.find_user(email) or Refused(Refusal.NOT_INVITED, email)
+        return self._accounts.admit(email) or Refused(Refusal.NOT_INVITED, email)
 
 
 def _from_another_site(conn: HTTPConnection) -> bool:
@@ -119,3 +119,17 @@ def current_user(conn: HTTPConnection) -> User:
 
 
 CurrentUser = Annotated[User, Depends(current_user)]
+
+
+class NotAdministrator(Exception):
+    """Only an Administrator may do this."""
+
+
+def current_administrator(user: CurrentUser) -> User:
+    """Raises NotAdministrator."""
+    if user.role != Role.ADMINISTRATOR:
+        raise NotAdministrator
+    return user
+
+
+CurrentAdministrator = Annotated[User, Depends(current_administrator)]

@@ -2,6 +2,15 @@
 {% block title %}{{ t("dashboard.title") }}{% endblock %}
 {% block header %}{% include "_user.html" %}{% endblock %}
 {% block content %}
+  {% if user.role == "administrator" %}
+    <section class="panel" aria-labelledby="administration">
+      <div class="panel-heading">
+        <h2 id="administration">{{ t("administration.heading") }}</h2>
+        <a class="button" href="/users">{{ t("administration.users") }}</a>
+      </div>
+      <p class="muted">{{ t("administration.explain") }}</p>
+    </section>
+  {% endif %}
   <section class="panel" aria-labelledby="claude-account">
     <div class="panel-heading">
       <h2 id="claude-account">{{ t("claude_account.heading") }}</h2>

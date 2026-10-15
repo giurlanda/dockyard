@@ -144,13 +144,14 @@ def wait_until(condition: Callable[[], bool], timeout: float = 10) -> bool:
 
 
 @pytest.fixture
-def add_user(start_dockyard: Callable[..., TestClient]) -> Callable[[str], None]:
-    """Until Invitations exist, a User is added the one way the public interface allows: by
-    naming them first Administrator for a restart. Every start shares the same data and Runtime.
-    """
+def add_user(dockyard: TestClient, proxy: AccessProxy) -> Callable[[str], None]:
+    """The first Administrator invites the person, who then reaches Dockyard for the first time."""
 
     def add(email: str) -> None:
-        start_dockyard(DOCKYARD_FIRST_ADMINISTRATOR_EMAIL=email)
+        dockyard.post(
+            "/api/invitations", json={"email": email}, headers=proxy.headers(ADMINISTRATOR)
+        )
+        assert dockyard.get("/api/me", headers=proxy.headers(email)).status_code == 200
 
     return add
 

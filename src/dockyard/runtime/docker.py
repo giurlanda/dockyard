@@ -47,6 +47,8 @@ CREDENTIALS = f"{CLAUDE_CONFIG_DIR}/.credentials.json"
 # volume's root to root:root. Project paths are below it.
 WORKSPACE = "/workspace"
 HANDOVER_MOUNT = "/volume"  # where a new volume is mounted to hand it to the non-root user
+VOLUME_RELEASE_TIMEOUT = 10  # seconds a container being removed may still hold its volumes
+VOLUME_RELEASE_INTERVAL = 0.2  # seconds between two attempts to remove such a volume
 # Trusts the path $1 in the Claude config: see DockerRuntime._trust.
 TRUST_SCRIPT = """
 set -eu
@@ -239,6 +241,26 @@ class DockerRuntime:
                 except APIError as error:
                     if "already in progress" not in str(error):  # its program ended: auto-removed
                         raise
+
+    def remove_claude_account(self, user: str) -> None:
+        with self._docker():
+            self.stop_login_environment(user)
+            try:
+                claude_config = self._client.volumes.get(_claude_config_volume(user))
+            except NotFound:
+                return
+            # A login environment Docker is still removing holds the volume for a moment.
+            deadline = time.monotonic() + VOLUME_RELEASE_TIMEOUT
+            while True:
+                try:
+                    claude_config.remove(force=True)
+                    return
+                except NotFound:
+                    return
+                except APIError:
+                    if time.monotonic() > deadline:
+                        raise
+                    time.sleep(VOLUME_RELEASE_INTERVAL)
 
     def start_clone(
         self, user: str, project: str, repository: str, *, credential: GitToken | None = None

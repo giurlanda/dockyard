@@ -163,6 +163,46 @@ def test_a_user_stays_connected_after_signing_in_again(
     assert runtime.claude_account_connected(user)
 
 
+def test_removing_a_claude_account_disconnects_only_that_user(
+    runtime: Runtime, new_user: Callable[[], str]
+) -> None:
+    alice, bob = new_user(), new_user()
+    for user in (alice, bob):
+        runtime.start_login_environment(user)
+        sign_in(runtime, user)
+
+    runtime.remove_claude_account(alice)
+
+    assert not runtime.claude_account_connected(alice)
+    assert runtime.claude_account_connected(bob)
+
+
+def test_removing_a_claude_account_ends_its_login_in_progress(
+    runtime: Runtime, new_user: Callable[[], str]
+) -> None:
+    user = new_user()
+    runtime.start_login_environment(user)
+    screen = Screen(runtime.attach_login_environment(user))
+    screen.wait_for("oauth/authorize")
+
+    runtime.remove_claude_account(user)
+
+    screen.wait_until_ended()
+    assert wait_until(lambda: not runtime.login_environment_running(user))
+    assert not runtime.claude_account_connected(user)
+
+
+def test_removing_a_claude_account_that_was_never_connected_is_harmless(
+    runtime: Runtime, new_user: Callable[[], str]
+) -> None:
+    user = new_user()
+
+    runtime.remove_claude_account(user)
+    runtime.remove_claude_account(user)
+
+    assert not runtime.claude_account_connected(user)
+
+
 def sign_in(runtime: Runtime, user: str, code: str = "the-code-from-claude-ai") -> Screen[Tty]:
     screen = Screen(runtime.attach_login_environment(user))
     screen.wait_for("oauth/authorize")

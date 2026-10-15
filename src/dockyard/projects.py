@@ -13,7 +13,7 @@ from dataclasses import dataclass, replace
 from enum import StrEnum
 from urllib.parse import urlsplit
 
-from .accounts import User
+from .accounts import RemovedUser, User
 from .database import Database
 from .git_credentials import GitCredentials
 from .providers import Provider
@@ -368,6 +368,21 @@ class Projects:
                 self._deleting.discard(project)
         return True
 
+    def remove_owner(self, removed: RemovedUser) -> None:
+        """Remove what the Runtime keeps for a removed User, whose records are gone: their
+        Projects, code and home included, then their Claude Account. Retried in the background
+        until Docker lets it all go."""
+        try:
+            self._remove_owner(removed)
+        except RuntimeUnavailable as error:
+            log.warning("Cannot remove what Docker keeps for a removed User yet: %s", error)
+            threading.Thread(
+                target=self._remove_owner_until_done,
+                args=(removed,),
+                name=f"remove-{removed.runtime_id}",
+                daemon=True,
+            ).start()
+
     def resume(self) -> None:
         """Pick up what was in progress when Dockyard stopped: clones, and Projects waiting for
         a Claude Account (connected meanwhile, or with a sign-in in progress)."""
@@ -558,6 +573,22 @@ class Projects:
                 log.warning("Cannot remove the failed clone of Project %s: %s", project, error)
                 time.sleep(self._poll_interval)
         self._forget(project)
+
+    def _remove_owner(self, removed: RemovedUser) -> None:
+        for project in removed.projects:
+            self._runtime.remove_project(project, code=True)
+            with self._lock:
+                self._clones.pop(project, None)
+                self._written.pop(project, None)
+        self._runtime.remove_claude_account(removed.runtime_id)
+
+    def _remove_owner_until_done(self, removed: RemovedUser) -> None:
+        while not self._closed.wait(self._poll_interval):
+            try:
+                self._remove_owner(removed)
+                return
+            except RuntimeUnavailable as error:
+                log.warning("Cannot remove what Docker keeps for a removed User yet: %s", error)
 
     def _report(self, project: str, clone: Clone) -> None:
         with self._lock:
