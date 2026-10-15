@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import http.client
 import os
 import secrets
 import socket
@@ -11,6 +12,7 @@ from typing import Any
 
 import docker
 import requests
+import urllib3
 from docker.errors import APIError, DockerException, ImageNotFound, NotFound
 from docker.models.containers import Container
 
@@ -19,14 +21,18 @@ from . import (
     DEFAULT_DNS,
     LOGIN_TIMEOUT,
     PROJECT_CPUS,
+    PROJECT_LOG_LINES,
     PROJECT_MEMORY,
     PROJECT_PIDS_LIMIT,
+    TRUST_PROMPT,
     Clone,
     CloneState,
     LoginNotRunning,
     ProjectMissing,
+    ProjectNotRunning,
     ProjectStatus,
     RuntimeUnavailable,
+    Stats,
     project_path,
 )
 
@@ -38,7 +44,6 @@ CREDENTIALS = f"{CLAUDE_CONFIG_DIR}/.credentials.json"
 # volume's root to root:root. Project paths are below it.
 WORKSPACE = "/workspace"
 HANDOVER_MOUNT = "/volume"  # where a new volume is mounted to hand it to the non-root user
-PROJECT_LOG_LINES = 1000
 # Trusts the path $1 in the Claude config: see DockerRuntime._trust.
 TRUST_SCRIPT = """
 set -eu
@@ -53,6 +58,14 @@ printf '%s' "$current" | jq --arg p "$1" '.projects[$p].hasTrustDialogAccepted =
 chmod 600 "$config.dockyard-new"
 mv -f "$config.dockyard-new" "$config"
 """
+# Whether the Claude config trusts the path $1.
+TRUSTED_SCRIPT = """
+jq -e --arg p "$1" '.projects[$p].hasTrustDialogAccepted == true' \\
+    "$CLAUDE_CONFIG_DIR/.claude.json" >/dev/null
+"""
+# How far back a Project's log is searched for a trust prompt still waiting: nothing is printed
+# while it waits.
+TRUST_PROMPT_LOG_LINES = 50
 
 KIND_LABEL = "dockyard.kind"
 USER_LABEL = "dockyard.user"
@@ -273,6 +286,46 @@ class DockerRuntime:
                 return ""
             return environments[0].logs(tail=PROJECT_LOG_LINES).decode(errors="replace")
 
+    def follow_project_log(self, project: str) -> FollowedLog:
+        with self._docker():
+            environments = self._project_containers(project, PROJECT_ENVIRONMENT)
+            if not environments:
+                raise ProjectNotRunning(project)
+            return FollowedLog(self._client.api, str(environments[0].id))
+
+    def attach_project(self, project: str) -> AttachedTty:
+        with self._docker():
+            environment = self._running_environment(project)
+            # Its last lines only: what it printed since its environment started can be a lot.
+            replay = environment.logs(tail=PROJECT_LOG_LINES)
+            try:
+                return AttachedTty(self._client.api, str(environment.id), replay=replay)
+            except (NotFound, APIError) as error:  # it stopped or restarts meanwhile
+                raise ProjectNotRunning(project) from error
+
+    def project_stats(self, project: str) -> Stats | None:
+        with self._docker():
+            try:
+                environment = self._running_environment(project)
+                # Two samples, a second apart: CPU usage is the difference between them.
+                sample: dict[str, Any] = self._client.api.stats(str(environment.id), stream=False)
+            except (ProjectNotRunning, NotFound):
+                return None
+        cpu, before = sample["cpu_stats"], sample["precpu_stats"]
+        used = cpu["cpu_usage"]["total_usage"] - before["cpu_usage"]["total_usage"]
+        elapsed = cpu.get("system_cpu_usage", 0) - before.get("system_cpu_usage", 0)
+        if not cpu.get("online_cpus") or elapsed <= 0:
+            return None  # it stopped meanwhile: Docker sends empty samples
+        memory = sample["memory_stats"]
+        # As `docker stats` counts it: the page cache it can drop at once is not in use.
+        cache = memory.get("stats", {}).get("inactive_file", 0)
+        return Stats(
+            cpu=used / elapsed * cpu["online_cpus"] * 100,
+            cpus=environment.attrs["HostConfig"]["NanoCpus"] / 1_000_000_000,
+            memory=memory["usage"] - cache,
+            memory_limit=memory["limit"],
+        )
+
     def project_status(self, project: str) -> ProjectStatus:
         with self._docker():
             if self._project_containers(project, CLONE):
@@ -284,9 +337,11 @@ class DockerRuntime:
             environments = self._project_containers(project, PROJECT_ENVIRONMENT)
             if not environments:
                 return ProjectStatus.STOPPED
-            if environments[0].status == "running":
-                return ProjectStatus.RUNNING
-            return ProjectStatus.FAILED
+            if environments[0].status != "running":
+                return ProjectStatus.FAILED
+            if self._asks_for_trust(environments[0], project_path(project)):
+                return ProjectStatus.TRUST_PROMPT
+            return ProjectStatus.RUNNING
 
     def remove_project(self, project: str, *, code: bool) -> None:
         with self._docker():
@@ -297,6 +352,13 @@ class DockerRuntime:
                 for volume in (_code_volume(project), _home_volume(project)):
                     with suppress(NotFound):
                         self._client.volumes.get(volume).remove(force=True)
+
+    def _running_environment(self, project: str) -> Container:
+        """Raises ProjectNotRunning."""
+        environments = self._project_containers(project, PROJECT_ENVIRONMENT)
+        if not environments or environments[0].status != "running":
+            raise ProjectNotRunning(project)
+        return environments[0]
 
     def _project_containers(self, project: str, kind: str | None = None) -> list[Container]:
         labels = [f"{PROJECT_LABEL}={project}"] + ([f"{KIND_LABEL}={kind}"] if kind else [])
@@ -335,6 +397,24 @@ class DockerRuntime:
         )
         if exit_status != 0:
             raise RuntimeUnavailable(f"Could not trust {path}: the job exited with {exit_status}")
+
+    def _asks_for_trust(self, environment: Container, path: str) -> bool:
+        """Whether its server shows the trust prompt, not answered yet.
+
+        The prompt stays in the log once answered: the Claude config tells. It is only read when
+        the prompt is there, which only happens when the trust registered before the start was
+        lost.
+        """
+        log = environment.logs(tail=TRUST_PROMPT_LOG_LINES).decode(errors="replace")
+        if TRUST_PROMPT not in log:
+            return False
+        user = environment.labels[USER_LABEL]
+        exit_status = self._run_job(
+            ["bash", "-c", TRUSTED_SCRIPT, "trusted", path],
+            volumes={_claude_config_volume(user): {"bind": CLAUDE_CONFIG_DIR, "mode": "ro"}},
+            labels=_labels("claude-config-check", user),
+        )
+        return exit_status != 0
 
     def _ensure_network(self) -> str:
         """The Projects network, created on first use."""
@@ -420,17 +500,23 @@ class DockerRuntime:
 
 
 class AttachedTty:
-    """The TTY of a running container's main process, through Docker's attach."""
+    """The TTY of a running container's main process, through Docker's attach.
 
-    def __init__(self, api: docker.APIClient, container: str) -> None:
+    It starts with everything the program printed, or with `replay` instead.
+    """
+
+    def __init__(
+        self, api: docker.APIClient, container: str, *, replay: bytes | None = None
+    ) -> None:
         self._api = api
         self._container = container
+        logs = 1 if replay is None else 0
         stream = api.attach_socket(
-            container, params={"stdin": 1, "stdout": 1, "stderr": 1, "stream": 1, "logs": 1}
+            container, params={"stdin": 1, "stdout": 1, "stderr": 1, "stream": 1, "logs": logs}
         )
         self._response = stream._response
         self._socket: socket.socket = stream._sock
-        self._unread = _read_ahead(self._response, self._socket)
+        self._unread = (replay or b"") + _read_ahead(self._response, self._socket)
         self._socket.settimeout(None)  # docker-py leaves the client's request timeout on it
 
     def read(self) -> bytes:
@@ -455,6 +541,35 @@ class AttachedTty:
             self._socket.shutdown(socket.SHUT_RDWR)
         self._socket.close()
         self._response.close()
+
+
+class FollowedLog:
+    """A container's log, followed through Docker's logs endpoint.
+
+    Read straight from the HTTP response, which takes Docker's chunks apart as they come: the
+    stream docker-py offers hands a TTY's log over one byte at a time.
+    """
+
+    def __init__(self, api: docker.APIClient, container: str) -> None:
+        client: Any = api  # its helpers for raw responses are not in its stubs
+        self._stream = client.logs(container, stream=True, follow=True, tail=PROJECT_LOG_LINES)
+        self._response = self._stream._response
+        # docker-py leaves the client's request timeout on it: a quiet server is no failure.
+        client._disable_socket_timeout(client._get_raw_response_socket(self._response))
+
+    def read(self) -> bytes:
+        try:
+            data = bytes(self._response.raw.read1(65536))
+        except (OSError, ValueError, http.client.HTTPException, urllib3.exceptions.HTTPError):
+            data = b""  # closed meanwhile: the chunk it was reading is cut short
+        if not data:
+            self._response.close()
+        return data
+
+    def close(self) -> None:
+        """Only shuts the connection down: the reader lets go of the response once it sees that."""
+        with suppress(OSError, DockerException):
+            self._stream.close()
 
 
 def _read_ahead(response: Any, sock: socket.socket) -> bytes:

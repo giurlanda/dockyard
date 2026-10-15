@@ -16,18 +16,26 @@ from . import (
     PROJECT_CPUS,
     PROJECT_MEMORY,
     PROJECT_PIDS_LIMIT,
+    TRUST_PROMPT,
     Clone,
     CloneState,
     LoginNotRunning,
+    Output,
     ProjectMissing,
+    ProjectNotRunning,
     ProjectStatus,
     RuntimeUnavailable,
+    Stats,
     Tty,
     project_path,
 )
 
 # The last commit of every repository the fake publishes, as on github.com/octocat/Hello-World.
 LAST_COMMIT = "Merge pull request #6 from Spaceghost/patch-1"
+# What a running Project uses, until a test says otherwise (see `use`).
+USED_CPU = 0.5  # percent of one CPU
+USED_MEMORY = 200 * 1024**2  # bytes
+CTRL_C = "\x03"
 
 
 class FakeRuntime:
@@ -82,6 +90,27 @@ class FakeRuntime:
         """The Project's Remote Control Server keeps failing from now on, until started again."""
         with self._lock:
             self._projects[project].crashed = True
+
+    def lose_trust(self, project: str) -> None:
+        """Another writer of the User's Claude config drops the trust of the Project's path, and
+        its Remote Control Server restarts (as after a crash): it asks for that trust again."""
+        with self._lock:
+            found = self._projects[project]
+            self._trusted.get(found.user, set()).discard(project_path(project))
+            server = found.server
+        if server:
+            server.exit()
+
+    def use(self, project: str, *, cpu: float, memory: int) -> None:
+        """The Project uses this much from now on."""
+        with self._lock:
+            self._projects[project].usage = (cpu, memory)
+
+    def watching(self, project: str) -> int:
+        """How many follow the Project's server: its log and its console."""
+        with self._lock:
+            server = self._projects[project].server
+        return server.watching() if server else 0
 
     def check_reachable(self) -> None:
         if not self._reachable:
@@ -146,6 +175,7 @@ class FakeRuntime:
         with self._lock:
             running = Clone(CloneState.RUNNING, started)
             self._projects[project] = _Project(
+                user=user,
                 code=True,
                 clone=running if self._clones_paused else outcome,
                 clone_outcome=outcome,
@@ -169,19 +199,123 @@ class FakeRuntime:
             found = self._projects.get(project)
             if not found or not found.code:
                 raise ProjectMissing(project)
+            self._trusted.setdefault(user, set()).add(project_path(project))
+            found.command = (
+                f"remote-control --name={name} --spawn worktree --permission-mode {permission_mode}"
+            )
+            previous, found.server, found.crashed = found.server, None, False
+        if previous:
+            previous.end()
+        self._run(project)
+
+    def stop_project(self, project: str) -> None:
+        self.check_reachable()
+        with self._lock:
+            found = self._projects.get(project)
+            server = found.server if found else None
+            if found:
+                found.server = None
+        if server:
+            server.end()
+
+    def project_log(self, project: str) -> str:
+        self.check_reachable()
+        with self._lock:
+            found = self._projects.get(project)
+            server = found.server if found else None
+        return server.printed.decode(errors="replace") if server else ""
+
+    def follow_project_log(self, project: str) -> Output:
+        self.check_reachable()
+        with self._lock:
+            found = self._projects.get(project)
+            server = found.server if found else None
+        if server is None:
+            raise ProjectNotRunning(project)
+        return server.attach()
+
+    def attach_project(self, project: str) -> Tty:
+        self.check_reachable()
+        with self._lock:
+            found = self._projects.get(project)
+            server = found.server if found and not found.crashed else None
+        if server is None:
+            raise ProjectNotRunning(project)
+        return server.attach()
+
+    def project_stats(self, project: str) -> Stats | None:
+        self.check_reachable()
+        with self._lock:
+            found = self._projects.get(project)
+            if not found or not found.server or found.crashed:
+                return None
+            cpu, memory = found.usage
+            return Stats(cpu=cpu, cpus=PROJECT_CPUS, memory=memory, memory_limit=PROJECT_MEMORY)
+
+    def project_status(self, project: str) -> ProjectStatus:
+        self.check_reachable()
+        with self._lock:
+            found = self._projects.get(project)
+            if found and found.clone:
+                return ProjectStatus.CLONING
+            if not found or not found.code:
+                return ProjectStatus.MISSING
+            if found.server is None:
+                return ProjectStatus.STOPPED
+            if found.crashed:
+                return ProjectStatus.FAILED
+            server = found.server
+        return ProjectStatus.TRUST_PROMPT if server.asking else ProjectStatus.RUNNING
+
+    def remove_project(self, project: str, *, code: bool) -> None:
+        self.check_reachable()
+        with self._lock:
+            found = self._projects.get(project)
+            server = found.server if found else None
+            if found:
+                found.clone = None
+                found.server = None
+                if code:
+                    found.code = False
+                    found.starts = 0  # its home goes with its code
+        if server:
+            server.end()
+
+    def _run(self, project: str) -> None:
+        """Start the Project's Remote Control Server in its environment, as the stand-in plays it.
+
+        Never called holding self._lock: the server calls back into the Runtime.
+        """
+        with self._lock:
+            found = self._projects[project]
             path = project_path(project)
-            trusted = self._trusted.setdefault(user, set())
-            trusted.add(path)
-            environment = self._remote_control.setdefault(user, {}).setdefault(
+            trusted = path in self._trusted.get(found.user, set())
+            command = found.command
+        server = _Server(
+            [command, f"in {path}"],
+            trusted=trusted,
+            trust=lambda: self._trust(found.user, path),
+            report=lambda: self._report(project),
+            exited=lambda: self._restart(project, server),
+        )
+        with self._lock:
+            found.server = server
+
+    def _trust(self, user: str, path: str) -> None:
+        with self._lock:
+            self._trusted.setdefault(user, set()).add(path)
+
+    def _report(self, project: str) -> list[str]:
+        """What the contract suite's stand-in reports once its directory is trusted."""
+        with self._lock:
+            found = self._projects[project]
+            path = project_path(project)
+            environment = self._remote_control.setdefault(found.user, {}).setdefault(
                 path, secrets.token_hex(8)
             )
             found.starts += 1
-            # What the contract suite's stand-in prints when it starts.
-            report = [
-                f"remote-control --name={name} --spawn worktree"
-                f" --permission-mode {permission_mode}",
-                f"in {path}",
-                f"trusted: {' '.join(sorted(trusted))}",
+            return [
+                f"trusted: {' '.join(sorted(self._trusted.get(found.user, set())))}",
                 "claude config mode: 600",
                 f"environment: {environment}",
                 f"starts: {found.starts}",
@@ -194,44 +328,15 @@ class FakeRuntime:
                 f"cpu limit: {PROJECT_CPUS * 100000} 100000",
                 f"dns: {' '.join(self._dns)}",
                 "anthropic environment: ",
-                "Remote Control ready",
             ]
-            found.log = "".join(f"{line}\r\n" for line in report)
-            found.crashed = False
 
-    def stop_project(self, project: str) -> None:
-        self.check_reachable()
-        with self._lock:
-            if found := self._projects.get(project):
-                found.log = None
-
-    def project_log(self, project: str) -> str:
-        self.check_reachable()
+    def _restart(self, project: str, server: _Server) -> None:
+        """The server exited by itself: Docker starts it again, in the same environment."""
         with self._lock:
             found = self._projects.get(project)
-            return found.log or "" if found else ""
-
-    def project_status(self, project: str) -> ProjectStatus:
-        self.check_reachable()
-        with self._lock:
-            found = self._projects.get(project)
-            if found and found.clone:
-                return ProjectStatus.CLONING
-            if not found or not found.code:
-                return ProjectStatus.MISSING
-            if found.log is None:
-                return ProjectStatus.STOPPED
-            return ProjectStatus.FAILED if found.crashed else ProjectStatus.RUNNING
-
-    def remove_project(self, project: str, *, code: bool) -> None:
-        self.check_reachable()
-        with self._lock:
-            if found := self._projects.get(project):
-                found.clone = None
-                found.log = None
-                if code:
-                    found.code = False
-                    found.starts = 0  # its home goes with its code
+            if not found or found.server is not server:  # stopped meanwhile
+                return
+        self._run(project)
 
     def _sign_in(self, user: str) -> None:
         with self._lock:
@@ -245,40 +350,38 @@ class FakeRuntime:
 
 @dataclass
 class _Project:
+    user: str
     code: bool  # its code volume exists
     clone: Clone | None
     clone_outcome: Clone = field(repr=False)  # how its clone ends
-    log: str | None = None  # what its server printed, while its environment is there
+    command: str = ""  # its server's arguments
+    server: _Server | None = None  # while its environment is there
     crashed: bool = False  # its server keeps failing
     starts: int = 0  # how many times its server started, as counted in its home
+    usage: tuple[float, int] = (USED_CPU, USED_MEMORY)
 
 
-class _Login:
-    """`claude auth login` as the contract suite's stand-in plays it, on a TTY of its own."""
+class _Program:
+    """A program on a TTY of its own, as the contract suite's stand-in plays it. The TTY echoes
+    what is typed; Ctrl+C interrupts the program."""
 
-    def __init__(self, *, signed_in: Callable[[], None], ended: Callable[[], None]) -> None:
+    def __init__(self) -> None:
         self._lock = threading.RLock()
-        self._signed_in = signed_in
-        self._ended = ended
-        self._printed = b""
+        self.printed = b""
         self._watchers: list[_Watcher] = []
         self._line = ""
         self._size = (24, 80)
         self._over = False
-        self._print(
-            "Opening browser to sign in…\r\n"
-            "If the browser didn't open, visit: https://claude.com/cai/oauth/authorize?fake=1\r\n"
-            "Paste code here if prompted > "
-        )
 
     def attach(self) -> _Watcher:
         with self._lock:
-            if self._over:
-                raise LoginNotRunning
             watcher = _Watcher(self)
             # Like Docker's logs, the replay holds complete lines only: never a pending prompt.
-            watcher.show(self._printed[: self._printed.rfind(b"\n") + 1])
-            self._watchers.append(watcher)
+            watcher.show(self.printed[: self.printed.rfind(b"\n") + 1])
+            if self._over:
+                watcher.show(b"")
+            else:
+                self._watchers.append(watcher)
             return watcher
 
     def detach(self, watcher: _Watcher) -> None:
@@ -286,21 +389,70 @@ class _Login:
             if watcher in self._watchers:
                 self._watchers.remove(watcher)
 
+    def watching(self) -> int:
+        with self._lock:
+            return len(self._watchers)
+
     def type(self, keys: str) -> None:
         with self._lock:
             for key in keys:
                 if self._over:
                     return
-                if key in "\r\n":
+                if key == CTRL_C:
+                    self._print("^C\r\n")
+                    self.exit()
+                elif key in "\r\n":
                     self._print("\r\n")
-                    self._submit(self._line)
+                    line, self._line = self._line, ""
+                    self._submit(line)
                 else:
                     self._line += key
-                    self._print(key)  # the terminal echoes what is typed
+                    self._print(key)
 
     def resize(self, rows: int, cols: int) -> None:
         with self._lock:
             self._size = (rows, cols)
+            self._resized()
+
+    def end(self) -> None:
+        """It is stopped from outside."""
+        with self._lock:
+            if self._over:
+                return
+            self._over = True
+            for watcher in self._watchers:
+                watcher.show(b"")
+            self._watchers.clear()
+
+    def exit(self) -> None:
+        """It ends by itself."""
+        self.end()
+
+    def _submit(self, line: str) -> None:
+        """A line was typed."""
+
+    def _resized(self) -> None:
+        """Its terminal changed size."""
+
+    def _print(self, text: str) -> None:
+        data = text.encode()
+        self.printed += data
+        for watcher in self._watchers:
+            watcher.show(data)
+
+
+class _Login(_Program):
+    """`claude auth login`."""
+
+    def __init__(self, *, signed_in: Callable[[], None], ended: Callable[[], None]) -> None:
+        super().__init__()
+        self._signed_in = signed_in
+        self._ended = ended
+        self._print(
+            "Opening browser to sign in…\r\n"
+            "If the browser didn't open, visit: https://claude.com/cai/oauth/authorize?fake=1\r\n"
+            "Paste code here if prompted > "
+        )
 
     def _submit(self, code: str) -> None:
         rows, cols = self._size
@@ -314,26 +466,76 @@ class _Login:
 
     def end(self) -> None:
         with self._lock:
-            if self._over:
-                return
-            self._over = True
-            for watcher in self._watchers:
-                watcher.show(b"")
-            self._watchers.clear()
-        self._ended()
+            over = self._over
+            super().end()
+        if not over:
+            self._ended()
 
-    def _print(self, text: str) -> None:
-        data = text.encode()
-        self._printed += data
-        for watcher in self._watchers:
-            watcher.show(data)
+
+class _Server(_Program):
+    """`claude remote-control ...`: it asks to trust its directory unless the Claude config
+    already does, reports what it sees, then waits, reporting its terminal size when it changes.
+    """
+
+    def __init__(
+        self,
+        intro: list[str],
+        *,
+        trusted: bool,
+        trust: Callable[[], None],
+        report: Callable[[], list[str]],
+        exited: Callable[[], None],
+    ) -> None:
+        super().__init__()
+        self._trust = trust
+        self._report = report
+        self._exited = exited
+        self.asking = not trusted
+        self._lines(intro)
+        if self.asking:
+            self._lines(
+                [
+                    f"{TRUST_PROMPT}: is this a project you created or one you trust?",
+                    "> 1. Yes, I trust this folder",
+                    "  2. No, exit",
+                ]
+            )
+        else:
+            self._ready()
+
+    def exit(self) -> None:
+        with self._lock:
+            over = self._over
+            self.end()
+        if not over:
+            self._exited()
+
+    def _submit(self, line: str) -> None:
+        if not self.asking:
+            return
+        if line.strip() not in ("", "1"):
+            self.exit()
+            return
+        self.asking = False
+        self._trust()
+        self._ready()
+
+    def _ready(self) -> None:
+        self._lines([*self._report(), "Remote Control ready"])
+
+    def _resized(self) -> None:
+        rows, cols = self._size
+        self._lines([f"Terminal size: {rows} {cols}"])
+
+    def _lines(self, lines: list[str]) -> None:
+        self._print("".join(f"{line}\r\n" for line in lines))
 
 
 class _Watcher:
-    """A Tty on a fake login."""
+    """A Tty on a fake program."""
 
-    def __init__(self, login: _Login) -> None:
-        self._login = login
+    def __init__(self, program: _Program) -> None:
+        self._program = program
         self._output: queue.SimpleQueue[bytes] = queue.SimpleQueue()
 
     def show(self, data: bytes) -> None:
@@ -346,11 +548,11 @@ class _Watcher:
         return data
 
     def write(self, data: bytes) -> None:
-        self._login.type(data.decode(errors="replace"))
+        self._program.type(data.decode(errors="replace"))
 
     def resize(self, rows: int, cols: int) -> None:
-        self._login.resize(rows, cols)
+        self._program.resize(rows, cols)
 
     def close(self) -> None:
-        self._login.detach(self)
+        self._program.detach(self)
         self.show(b"")

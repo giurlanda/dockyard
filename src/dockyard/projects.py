@@ -17,10 +17,14 @@ from .database import Database
 from .runtime import (
     Clone,
     CloneState,
+    Output,
     ProjectMissing,
+    ProjectNotRunning,
     ProjectStatus,
     Runtime,
     RuntimeUnavailable,
+    Stats,
+    Tty,
 )
 
 log = logging.getLogger(__name__)
@@ -59,6 +63,8 @@ class Status(StrEnum):
     CLONING = "cloning"
     WAITING = "waiting"  # it should run, but its owner's Claude Account is not connected
     RUNNING = "running"
+    # Its Remote Control Server asks whether to trust the Project: its owner answers in the console.
+    TRUST_PROMPT = "trust_prompt"
     STOPPED = "stopped"
     ERROR = "error"
 
@@ -66,6 +72,7 @@ class Status(StrEnum):
 _STATUS = {
     ProjectStatus.CLONING: Status.CLONING,
     ProjectStatus.RUNNING: Status.RUNNING,
+    ProjectStatus.TRUST_PROMPT: Status.TRUST_PROMPT,
     ProjectStatus.FAILED: Status.ERROR,
     ProjectStatus.MISSING: Status.ERROR,
 }
@@ -82,6 +89,7 @@ class Refusal(StrEnum):
     NAME_MISSING = "name_missing"
     NAME_INVALID = "name_invalid"
     CLONING = "cloning"
+    NOT_RUNNING = "not_running"
 
 
 class ProjectRefused(Exception):
@@ -245,6 +253,43 @@ class Projects:
         self._should_run(project, False)
         self._runtime.stop_project(project)
         return self.get(owner, project)
+
+    def follow_log(self, owner: User, project: str) -> Output | None:
+        """What the Project's Remote Control Server printed, then what it prints, until it stops
+        or restarts. None if not found.
+
+        Raises ProjectRefused, RuntimeUnavailable.
+        """
+        if self._row(owner, project) is None:
+            return None
+        try:
+            return self._runtime.follow_project_log(project)
+        except ProjectNotRunning as error:
+            raise ProjectRefused(Refusal.NOT_RUNNING) from error
+
+    def attach_console(self, owner: User, project: str) -> Tty | None:
+        """The console: the Project's Remote Control Server's own TTY. None if not found.
+
+        Raises ProjectRefused, RuntimeUnavailable.
+        """
+        if self._row(owner, project) is None:
+            return None
+        try:
+            return self._runtime.attach_project(project)
+        except ProjectNotRunning as error:
+            raise ProjectRefused(Refusal.NOT_RUNNING) from error
+
+    def stats(self, owner: User, project: str) -> Stats | None:
+        """The CPU and RAM the Project uses now. None if not found.
+
+        Raises ProjectRefused, RuntimeUnavailable.
+        """
+        if self._row(owner, project) is None:
+            return None
+        stats = self._runtime.project_stats(project)
+        if stats is None:
+            raise ProjectRefused(Refusal.NOT_RUNNING)
+        return stats
 
     def follow_sign_in(self, owner: User) -> None:
         """Once the owner's sign-in ends, start their Projects waiting for their Claude Account."""

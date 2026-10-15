@@ -1,1 +1,1 @@
-<span class="badge{{ {'error': ' bad', 'running': ' good', 'waiting': ' warn'}.get(project.status, '') }}" data-testid="project-status">{{ t("projects.status." ~ project.status) }}</span>
+<span class="badge{{ {'error': ' bad', 'running': ' good', 'waiting': ' warn', 'trust_prompt': ' warn'}.get(project.status, '') }}" data-testid="project-status">{{ t("projects.status." ~ project.status) }}</span>

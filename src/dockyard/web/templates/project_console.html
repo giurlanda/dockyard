@@ -1,0 +1,35 @@
+{% extends "base.html" %}
+{% block title %}{{ project.name }} · {{ t("console.title") }}{% endblock %}
+{% block head %}<link rel="stylesheet" href="/static/vendor/xterm/xterm.css">{% endblock %}
+{% block header %}{% include "_user.html" %}{% endblock %}
+{% block content %}
+  <section class="panel">
+    <div class="panel-heading">
+      <h1>{{ project.name }} · {{ t("console.title") }}</h1>
+      {% include "_project_status.html" %}
+    </div>
+    <p class="muted">{{ t("console.explain") }}</p>
+    <p class="warning">{{ t("console.ctrl_c") }}</p>
+  </section>
+  <section class="panel">
+    <div class="terminal" data-terminal="/ws/projects/{{ project.id }}/console"
+         role="region" aria-label="{{ t('console.terminal') }}"></div>
+    <form class="code" data-terminal-send>
+      <label for="answer">{{ t("console.answer") }}</label>
+      <div class="code-row">
+        <input id="answer" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false">
+        <button class="primary">{{ t("console.send") }}</button>
+      </div>
+      <p class="hint muted">{{ t("console.answer_hint") }}</p>
+    </form>
+    {% include "_stream_outcomes.html" %}
+    <div class="actions"><a href="/projects/{{ project.id }}">{{ t("project.back") }}</a></div>
+  </section>
+{% endblock %}
+{% block scripts %}
+<script src="/static/vendor/xterm/xterm.js"></script>
+<script src="/static/vendor/xterm/addon-fit.js"></script>
+<script src="/static/vendor/xterm/addon-web-links.js"></script>
+<script src="/static/terminal.js"></script>
+<script src="/static/stream.js"></script>
+{% endblock %}

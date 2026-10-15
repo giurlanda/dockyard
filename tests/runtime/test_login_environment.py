@@ -4,7 +4,7 @@ from collections.abc import Callable
 
 import pytest
 
-from dockyard.runtime import LoginNotRunning, Runtime
+from dockyard.runtime import LoginNotRunning, Runtime, Tty
 
 from .conftest import MakeRuntime, Screen, wait_until
 
@@ -163,7 +163,7 @@ def test_a_user_stays_connected_after_signing_in_again(
     assert runtime.claude_account_connected(user)
 
 
-def sign_in(runtime: Runtime, user: str, code: str = "the-code-from-claude-ai") -> Screen:
+def sign_in(runtime: Runtime, user: str, code: str = "the-code-from-claude-ai") -> Screen[Tty]:
     screen = Screen(runtime.attach_login_environment(user))
     screen.wait_for("oauth/authorize")
     screen.type(f"{code}\r")

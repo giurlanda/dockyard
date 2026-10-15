@@ -21,7 +21,7 @@ import pytest
 import yaml
 from docker.errors import APIError, DockerException, NotFound
 
-from dockyard.runtime import Runtime, Tty
+from dockyard.runtime import Output, Runtime, Tty
 from dockyard.runtime.docker import DockerRuntime
 from dockyard.runtime.fake import FakeRuntime
 
@@ -177,10 +177,10 @@ def _remove_when_unused(volume: Any) -> None:
             time.sleep(0.2)
 
 
-class Screen:
-    """Watches a Tty from a background thread and keeps everything it printed."""
+class Screen[T: Output]:
+    """Watches a Tty (or any output) from a background thread and keeps everything it printed."""
 
-    def __init__(self, tty: Tty) -> None:
+    def __init__(self, tty: T) -> None:
         self.tty = tty
         self._printed = b""
         self._ended = False
@@ -200,7 +200,7 @@ class Screen:
     def text(self) -> str:
         return self._printed.decode(errors="replace")
 
-    def type(self, keys: str) -> None:
+    def type(self: Screen[Tty], keys: str) -> None:
         self.tty.write(keys.encode())
 
     def wait_for(self, text: str, timeout: float = 20) -> None:
@@ -221,3 +221,34 @@ def wait_until(condition: Callable[[], bool], timeout: float = 20) -> bool:
             return False
         time.sleep(0.1)
     return True
+
+
+LoseTrust = Callable[[Runtime, str], None]
+
+
+@pytest.fixture
+def lose_trust(request: pytest.FixtureRequest) -> LoseTrust:
+    """Another writer of the User's Claude config drops the trust of the Project's path (the lost
+    update the spec warns about), then its Remote Control Server restarts, as after a crash."""
+    if request.node.callspec.params["make_runtime"] == "fake":
+
+        def lose_in_fake(runtime: Runtime, project: str) -> None:
+            assert isinstance(runtime, FakeRuntime)
+            runtime.lose_trust(project)
+
+        return lose_in_fake
+    daemon: docker.DockerClient = request.getfixturevalue("docker_daemon")
+
+    def lose(runtime: Runtime, project: str) -> None:
+        labels = [f"dockyard.project={project}", "dockyard.kind=project"]
+        (environment,) = daemon.containers.list(filters={"label": labels})
+        forget = (
+            'config="$CLAUDE_CONFIG_DIR/.claude.json"; '
+            'jq --arg p "$PWD" "del(.projects[\\$p])" "$config" > "$config.new" && '
+            'chmod 600 "$config.new" && mv "$config.new" "$config"'
+        )
+        for command in (["bash", "-c", forget], ["pkill", "-f", "sleep infinity"]):
+            exit_code, output = environment.exec_run(command, workdir=f"/workspace/{project}")
+            assert exit_code == 0, output
+
+    return lose

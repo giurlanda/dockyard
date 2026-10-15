@@ -244,3 +244,103 @@ def test_the_running_project_page_speaks_italian(dockyard: TestClient, proxy: Ac
     assert "La prima Sessione lavora direttamente nella copia principale" in page
     assert "Riavvia" in page
     assert "Ferma" in page
+
+
+def running_project_page(dockyard: TestClient, headers: dict[str, str]) -> str:
+    """The path of a new Project's page, once its Remote Control Server runs."""
+    connect_claude_account(dockyard, headers)
+    path = submit(dockyard, headers).url.path
+    assert wait_until(lambda: "Running" in dockyard.get(path, headers=headers).text)
+    return path
+
+
+def test_a_running_project_page_shows_its_usage_and_leads_to_its_log_and_console(
+    dockyard: TestClient, proxy: AccessProxy
+) -> None:
+    signed_in = proxy.headers(ADMINISTRATOR)
+    path = running_project_page(dockyard, signed_in)
+    project = path.rsplit("/", 1)[-1]
+
+    page = dockyard.get(path, headers=signed_in).text
+
+    assert "CPU" in page
+    assert "RAM" in page
+    assert f'data-stats="/api/projects/{project}/stats"' in page
+    assert f'href="{path}/logs"' in page
+    assert f'href="{path}/console"' in page
+
+
+def test_a_stopped_project_page_offers_neither_usage_nor_log_nor_console(
+    dockyard: TestClient, proxy: AccessProxy
+) -> None:
+    signed_in = proxy.headers(ADMINISTRATOR)
+    path = running_project_page(dockyard, signed_in)
+
+    page = dockyard.post(f"{path}/stop", headers=signed_in).text
+
+    assert "data-stats" not in page
+    assert f'href="{path}/logs"' not in page
+    assert f'href="{path}/console"' not in page
+
+
+def test_the_log_page_follows_the_log_read_only(dockyard: TestClient, proxy: AccessProxy) -> None:
+    signed_in = proxy.headers(ADMINISTRATOR)
+    path = running_project_page(dockyard, signed_in)
+    project = path.rsplit("/", 1)[-1]
+
+    page = dockyard.get(f"{path}/logs", headers=signed_in)
+
+    assert page.status_code == 200
+    assert f'data-terminal="/ws/projects/{project}/logs"' in page.text
+    assert "data-terminal-readonly" in page.text
+    assert f'href="{path}"' in page.text
+
+
+def test_the_console_page_warns_that_ctrl_c_stops_the_server(
+    dockyard: TestClient, proxy: AccessProxy
+) -> None:
+    signed_in = proxy.headers(ADMINISTRATOR)
+    path = running_project_page(dockyard, signed_in)
+    project = path.rsplit("/", 1)[-1]
+
+    page = dockyard.get(f"{path}/console", headers=signed_in)
+
+    assert page.status_code == 200
+    assert f'data-terminal="/ws/projects/{project}/console"' in page.text
+    assert "data-terminal-readonly" not in page.text
+    assert "Ctrl+C" in page.text
+    assert "stops the Remote Control Server" in page.text
+
+
+def test_a_project_asking_for_trust_says_to_open_the_console(
+    dockyard: TestClient, proxy: AccessProxy, runtime: FakeRuntime
+) -> None:
+    signed_in = proxy.headers(ADMINISTRATOR)
+    path = running_project_page(dockyard, signed_in)
+
+    runtime.lose_trust(path.rsplit("/", 1)[-1])
+
+    page = dockyard.get(path, headers=signed_in).text
+    assert "Waiting for your answer" in page
+    assert "asks whether to trust this Project" in page
+    assert f'href="{path}/console"' in page
+    assert "Waiting for your answer" in dockyard.get("/", headers=signed_in).text
+
+
+def test_the_log_console_and_trust_prompt_speak_italian(
+    dockyard: TestClient, proxy: AccessProxy, runtime: FakeRuntime
+) -> None:
+    signed_in = {**proxy.headers(ADMINISTRATOR), "Accept-Language": "it"}
+    connect_claude_account(dockyard, signed_in)
+    path = submit(dockyard, signed_in).url.path
+    assert wait_until(lambda: "In esecuzione" in dockyard.get(path, headers=signed_in).text)
+    runtime.lose_trust(path.rsplit("/", 1)[-1])
+
+    page = dockyard.get(path, headers=signed_in).text
+    console = dockyard.get(f"{path}/console", headers=signed_in).text
+    log = dockyard.get(f"{path}/logs", headers=signed_in).text
+
+    assert "Attende la tua risposta" in page
+    assert "Apri la console" in page
+    assert "ferma il Server Remote Control" in console
+    assert "Torna al Progetto" in log

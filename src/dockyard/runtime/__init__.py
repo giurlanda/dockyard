@@ -18,6 +18,9 @@ DEFAULT_DNS = ("1.1.1.1", "9.9.9.9")  # the DNS servers of Projects, unless conf
 PROJECT_CPUS = 2
 PROJECT_MEMORY = 4 * 1024**3  # bytes
 PROJECT_PIDS_LIMIT = 2048
+PROJECT_LOG_LINES = 1000  # how much of what a Project printed its log and console show first
+# What Claude Code shows when the Claude config does not trust the directory it starts in.
+TRUST_PROMPT = "Quick safety check"
 
 
 def project_path(project: str) -> str:
@@ -38,6 +41,10 @@ class ProjectMissing(Exception):
     """The Project's code is not there."""
 
 
+class ProjectNotRunning(Exception):
+    """The Project has nothing running to follow."""
+
+
 class CloneState(StrEnum):
     RUNNING = "running"
     SUCCEEDED = "succeeded"
@@ -55,25 +62,43 @@ class ProjectStatus(StrEnum):
 
     CLONING = "cloning"  # its clone has not been finished with yet
     RUNNING = "running"  # its Remote Control Server runs
+    # Its Remote Control Server asks, in its console, whether to trust the Project's path: the
+    # User's Claude config lost the trust registered before it started.
+    TRUST_PROMPT = "trust_prompt"
     FAILED = "failed"  # its environment is there, its Remote Control Server is not running
     STOPPED = "stopped"  # its code is there, nothing runs
     MISSING = "missing"  # nothing is there
 
 
-class Tty(Protocol):
-    """A program's TTY: what it prints, and keys and a size from whoever is watching it."""
+@dataclass(frozen=True)
+class Stats:
+    """What a running Project uses."""
+
+    cpu: float  # percent of one CPU, as `docker stats` shows it: 2 busy CPUs make 200
+    cpus: float  # the CPUs it may use
+    memory: int  # bytes
+    memory_limit: int  # bytes
+
+
+class Output(Protocol):
+    """What a program prints, as it prints it."""
 
     def read(self) -> bytes:
-        """What the program printed next, waiting for it; b"" once the TTY has ended."""
+        """What the program printed next, waiting for it; b"" once the output has ended."""
         ...
+
+    def close(self) -> None:
+        """Stop watching, at once: a read() waiting in another thread returns b"". The program
+        keeps running."""
+        ...
+
+
+class Tty(Output, Protocol):
+    """A program's TTY: what it prints, and keys and a size from whoever is watching it."""
 
     def write(self, data: bytes) -> None: ...
 
     def resize(self, rows: int, cols: int) -> None: ...
-
-    def close(self) -> None:
-        """Stop watching. The program keeps running."""
-        ...
 
 
 class Runtime(Protocol):
@@ -148,6 +173,27 @@ class Runtime(Protocol):
     def project_log(self, project: str) -> str:
         """What the Project's Remote Control Server printed since its environment started;
         "" when stopped."""
+        ...
+
+    def follow_project_log(self, project: str) -> Output:
+        """What the Project's Remote Control Server printed (its last PROJECT_LOG_LINES lines),
+        then what it prints, until its environment stops or restarts.
+
+        Raises ProjectNotRunning when the Project has no environment.
+        """
+        ...
+
+    def attach_project(self, project: str) -> Tty:
+        """The console: the TTY of the Project's Remote Control Server, starting with the last
+        PROJECT_LOG_LINES lines it printed. It ends when the server stops or restarts; Ctrl+C
+        typed in it stops the server, which then restarts.
+
+        Raises ProjectNotRunning when the server is not running.
+        """
+        ...
+
+    def project_stats(self, project: str) -> Stats | None:
+        """What the Project uses now; None when its Remote Control Server is not running."""
         ...
 
     def project_status(self, project: str) -> ProjectStatus: ...

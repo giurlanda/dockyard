@@ -1,15 +1,23 @@
 // A terminal in the browser, joined over a WebSocket to a terminal in the Runtime.
 //
 //   <div data-terminal="/ws/...">              the terminal, bridged to that socket
+//   <div data-terminal="/ws/..." data-terminal-readonly>  only shows what the socket sends
 //   <form data-terminal-send><input>...</form>  sends the input's value, then Enter
 //
 // When the socket closes, the terminal element dispatches "terminal-closed" (detail: {code}).
+// Leaving the page closes the socket: Dockyard stops following what it showed.
 (() => {
   "use strict";
   const element = document.querySelector("[data-terminal]");
   if (!element) return;
 
-  const terminal = new Terminal({ cursorBlink: true, fontSize: 13, scrollback: 2000 });
+  const readonly = element.hasAttribute("data-terminal-readonly");
+  const terminal = new Terminal({
+    cursorBlink: !readonly,
+    disableStdin: readonly,
+    fontSize: 13,
+    scrollback: 2000,
+  });
   const fit = new FitAddon.FitAddon();
   terminal.loadAddon(fit);
   terminal.loadAddon(new WebLinksAddon.WebLinksAddon());
@@ -34,8 +42,9 @@
       new CustomEvent("terminal-closed", { bubbles: true, detail: { code: event.code } }),
     );
   });
-  terminal.onData((data) => send({ type: "input", data }));
+  if (!readonly) terminal.onData((data) => send({ type: "input", data }));
   new ResizeObserver(resize).observe(element);
+  addEventListener("pagehide", () => socket.close());
 
   for (const form of document.querySelectorAll("[data-terminal-send]")) {
     form.addEventListener("submit", (event) => {

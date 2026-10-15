@@ -102,4 +102,7 @@ button.danger { border-color: var(--bad); color: var(--bad); }
 .modes .hint { margin: 0 0 8px 24px; }
 .modes > .hint:first-of-type { margin-left: 0; }
 .bypass-warning { display: none; margin: 8px 0 0; }
+.stats { display: flex; flex-wrap: wrap; gap: 8px 32px; margin: 0; }
+.stats dt { font-size: 13px; color: var(--muted); }
+.stats dd { margin: 0; font-size: 18px; font-variant-numeric: tabular-nums; }
 .modes:has(input[value="bypassPermissions"]:checked) .bypass-warning { display: block; }

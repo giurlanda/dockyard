@@ -2,6 +2,7 @@
 {% block title %}{{ project.name }}{% endblock %}
 {% block header %}{% include "_user.html" %}{% endblock %}
 {% block content %}
+  {% set live = project.status in ("running", "trust_prompt") %}
   <section class="panel">
     <div class="panel-heading">
       <h1>{{ project.name }}</h1>
@@ -27,15 +28,19 @@
       <h2 id="server">{{ t("project.server") }}</h2>
       {% if project.status == "running" %}
         <p>{{ t("project.running", name=project.name) }}</p>
+      {% elif project.status == "trust_prompt" %}
+        <p class="warning" data-follow-status="/api/projects/{{ project.id }}" data-status="{{ project.status }}">
+          {{ t("project.trust_prompt") }}
+          <a href="/projects/{{ project.id }}/console">{{ t("project.open_console") }}</a></p>
       {% elif project.status == "waiting" %}
-        <p class="warning" data-waiting="/api/projects/{{ project.id }}">{{ t("project.waiting") }}
-          <a href="/">{{ t("project.connect") }}</a></p>
+        <p class="warning" data-follow-status="/api/projects/{{ project.id }}" data-status="{{ project.status }}">
+          {{ t("project.waiting") }} <a href="/">{{ t("project.connect") }}</a></p>
       {% elif project.status == "stopped" %}
         <p class="muted">{{ t("project.stopped") }}</p>
       {% endif %}
       <p class="muted">{{ t("project.sessions") }}</p>
       <div class="actions">
-        {% if project.status in ("running", "error") %}
+        {% if project.status in ("running", "trust_prompt", "error") %}
           <form method="post" action="/projects/{{ project.id }}/restart"><button class="primary">{{ t("project.restart") }}</button></form>
         {% elif project.status in ("stopped", "waiting") %}
           <form method="post" action="/projects/{{ project.id }}/start"><button class="primary">{{ t("project.start") }}</button></form>
@@ -44,6 +49,24 @@
           <form method="post" action="/projects/{{ project.id }}/stop"><button>{{ t("project.stop") }}</button></form>
         {% endif %}
       </div>
+      {% if live or project.status == "error" %}
+        <div class="actions" aria-label="{{ t('project.follow') }}">
+          <a class="button" href="/projects/{{ project.id }}/logs">{{ t("project.logs") }}</a>
+          {% if live %}
+            <a class="button" href="/projects/{{ project.id }}/console">{{ t("project.console") }}</a>
+          {% endif %}
+        </div>
+      {% endif %}
+    </section>
+  {% endif %}
+  {% if live %}
+    <section class="panel" aria-labelledby="usage">
+      <h2 id="usage">{{ t("project.usage") }}</h2>
+      <dl class="stats" data-stats="/api/projects/{{ project.id }}/stats">
+        <div><dt>{{ t("project.cpu") }}</dt><dd data-testid="cpu" data-stat="cpu">…</dd></div>
+        <div><dt>{{ t("project.memory") }}</dt><dd data-testid="memory" data-stat="memory">…</dd></div>
+      </dl>
+      <p class="hint muted" data-stat="cpus" data-template="{{ t('project.cpu_hint', cpus='{value}') }}"></p>
     </section>
   {% endif %}
   <section class="panel" aria-labelledby="delete">

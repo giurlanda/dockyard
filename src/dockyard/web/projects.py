@@ -5,10 +5,14 @@ A User only ever reaches their own Projects: anyone else's answer "not found".
 
 from __future__ import annotations
 
+import logging
+from collections.abc import Callable
+from http import HTTPStatus
 from typing import Annotated, Literal
 from urllib.parse import urlencode
 
-from fastapi import APIRouter, Form, HTTPException, Request
+import anyio
+from fastapi import APIRouter, Form, HTTPException, Request, WebSocket
 from fastapi.responses import HTMLResponse, RedirectResponse
 from pydantic import BaseModel
 from starlette.responses import Response
@@ -23,9 +27,12 @@ from ..projects import (
     Refusal,
     Visibility,
 )
-from ..runtime import CloneState
-from .guard import CurrentUser
+from ..runtime import CloneState, Output, RuntimeUnavailable
+from .guard import CurrentUser, websocket_close_code
 from .pages import Pages
+from .terminal import bridge, show
+
+log = logging.getLogger(__name__)
 
 Lifecycle = Literal["start", "stop", "restart"]  # restarting is starting a running Project
 
@@ -64,11 +71,18 @@ class CloneOut(BaseModel):
     output: str
 
 
+class StatsOut(BaseModel):
+    cpu: float  # percent of one CPU: 2 busy CPUs make 200
+    cpus: float  # the CPUs it may use
+    memory: int  # bytes
+    memory_limit: int  # bytes
+
+
 def projects_routes(projects: Projects, pages: Pages) -> APIRouter:
     router = APIRouter()
 
     def refused(request: Request, refusal: ProjectRefused) -> Response:
-        status_code = 409 if refusal.reason == Refusal.CLONING else 422
+        status_code = 409 if refusal.reason in (Refusal.CLONING, Refusal.NOT_RUNNING) else 422
         return pages.problem(
             request,
             refusal.reason,
@@ -137,6 +151,28 @@ def projects_routes(projects: Projects, pages: Pages) -> APIRouter:
             raise HTTPException(404)
         return CloneOut(state=report.state, output=report.output)
 
+    @router.get("/api/projects/{project}/stats", response_model=StatsOut)
+    def get_stats(request: Request, user: CurrentUser, project: str) -> object:
+        try:
+            stats = projects.stats(user, project)
+        except ProjectRefused as refusal:
+            return refused(request, refusal)
+        if stats is None:
+            raise HTTPException(404)
+        return StatsOut(
+            cpu=stats.cpu, cpus=stats.cpus, memory=stats.memory, memory_limit=stats.memory_limit
+        )
+
+    @router.websocket("/ws/projects/{project}/logs")
+    async def logs(websocket: WebSocket, user: CurrentUser, project: str) -> None:
+        if output := await opened(websocket, lambda: projects.follow_log(user, project)):
+            await show(websocket, output)
+
+    @router.websocket("/ws/projects/{project}/console")
+    async def console(websocket: WebSocket, user: CurrentUser, project: str) -> None:
+        if tty := await opened(websocket, lambda: projects.attach_console(user, project)):
+            await bridge(websocket, tty)
+
     @router.post("/api/projects/{project}/{action}", response_model=ProjectOut)
     def run_project(request: Request, user: CurrentUser, project: str, action: Lifecycle) -> object:
         try:
@@ -196,6 +232,20 @@ def projects_routes(projects: Projects, pages: Pages) -> APIRouter:
             )
         raise HTTPException(404)
 
+    @router.get("/projects/{project}/logs", response_class=HTMLResponse)
+    def logs_page(request: Request, user: CurrentUser, project: str) -> HTMLResponse:
+        return following_page(request, user, project, "project_logs.html")
+
+    @router.get("/projects/{project}/console", response_class=HTMLResponse)
+    def console_page(request: Request, user: CurrentUser, project: str) -> HTMLResponse:
+        return following_page(request, user, project, "project_console.html")
+
+    def following_page(request: Request, user: User, project: str, template: str) -> HTMLResponse:
+        found = projects.get(user, project)
+        if found is None:
+            raise HTTPException(404)
+        return pages.render(request, template, user=user, project=found)
+
     @router.post("/projects/{project}/delete")
     def delete_from_page(
         user: CurrentUser, project: str, delete_code: Annotated[bool, Form()] = False
@@ -215,6 +265,23 @@ def projects_routes(projects: Projects, pages: Pages) -> APIRouter:
         return RedirectResponse(f"/projects/{project}", status_code=303)
 
     return router
+
+
+async def opened[T: Output](websocket: WebSocket, opening: Callable[[], T | None]) -> T | None:
+    """Accept the socket and open what it shows; if that cannot be, close it saying why."""
+    await websocket.accept()
+    try:
+        output = await anyio.to_thread.run_sync(opening)
+    except ProjectRefused:  # not running
+        await websocket.close(websocket_close_code(HTTPStatus.CONFLICT))
+        return None
+    except RuntimeUnavailable as error:
+        log.warning("The Runtime is unavailable: %s", error)
+        await websocket.close(websocket_close_code(HTTPStatus.SERVICE_UNAVAILABLE))
+        return None
+    if output is None:
+        await websocket.close(websocket_close_code(HTTPStatus.NOT_FOUND))
+    return output
 
 
 def _retry(report: CloneReport) -> str:
