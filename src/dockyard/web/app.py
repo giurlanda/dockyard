@@ -8,19 +8,23 @@ from contextlib import asynccontextmanager
 from typing import Annotated
 
 from fastapi import FastAPI, Form, Request
+from fastapi.encoders import jsonable_encoder
 from fastapi.exception_handlers import http_exception_handler
-from fastapi.responses import HTMLResponse, RedirectResponse
+from fastapi.exceptions import RequestValidationError
+from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from starlette.exceptions import HTTPException
 from starlette.responses import Response
 
 from ..accounts import Accounts
 from ..database import Database
+from ..git_credentials import GitCredentials
 from ..identity import SigningKeys, identity_for
 from ..projects import Projects
 from ..runtime import Runtime, RuntimeUnavailable
 from ..settings import Settings
 from .claude_account import claude_account_routes, claude_account_status
+from .git_credentials import git_credentials_routes
 from .guard import CurrentUser, IdentityGuard
 from .i18n import LANGUAGE_COOKIE, Language
 from .pages import Pages, is_api
@@ -39,6 +43,7 @@ def create_app(
     accounts = Accounts(database)
     accounts.bootstrap_first_administrator(settings.first_administrator_email)
     projects = Projects(database, runtime)
+    git_credentials = GitCredentials(database, settings.secret_key)
     try:
         projects.resume()
     except RuntimeUnavailable as error:
@@ -66,6 +71,12 @@ def create_app(
         error_name = "runtime_unavailable"
         return pages.problem(request, error_name, key=error_name, status_code=503)
 
+    @app.exception_handler(RequestValidationError)
+    async def invalid_request(request: Request, error: RequestValidationError) -> Response:
+        # What was wrong, never what was sent: it may hold a Git Credential's token.
+        detail = [{k: v for k, v in e.items() if k != "input"} for e in error.errors()]
+        return JSONResponse({"detail": jsonable_encoder(detail)}, status_code=422)
+
     @app.exception_handler(HTTPException)
     async def http_error(request: Request, error: HTTPException) -> Response:
         if error.status_code == 404 and not is_api(request):
@@ -80,6 +91,7 @@ def create_app(
             user=user,
             claude_account=claude_account_status(runtime, user),
             projects=projects.list(user),
+            git_credentials=git_credentials.list(user),
         )
 
     @app.post("/language")
@@ -96,6 +108,7 @@ def create_app(
 
     app.include_router(claude_account_routes(runtime, projects, pages))
     app.include_router(projects_routes(projects, pages))
+    app.include_router(git_credentials_routes(git_credentials, pages))
     app.mount("/static", StaticFiles(packages=[("dockyard.web", "static")]), name="static")
     return app
 

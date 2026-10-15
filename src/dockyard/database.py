@@ -53,6 +53,19 @@ MIGRATIONS = (
     ALTER TABLE projects ADD COLUMN should_run INTEGER NOT NULL DEFAULT 0
         CHECK (should_run IN (0, 1));
     """,
+    # token: encrypted with the Instance secret key, never stored in clear.
+    """
+    CREATE TABLE git_credentials (
+        id         TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(8)))),
+        owner      TEXT NOT NULL REFERENCES users (runtime_id),
+        label      TEXT NOT NULL,
+        provider   TEXT NOT NULL CHECK (provider IN ('github', 'gitlab')),
+        token      BLOB NOT NULL,
+        created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
+        updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
+    );
+    CREATE INDEX git_credentials_owner ON git_credentials (owner);
+    """,
 )
 
 

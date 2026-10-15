@@ -89,7 +89,7 @@ button.danger { border-color: var(--bad); color: var(--bad); }
 .fields { display: grid; gap: 16px; }
 .field { margin: 0; padding: 0; border: 0; min-width: 0; }
 .field label, .field legend { display: block; font-weight: 600; margin-bottom: 4px; padding: 0; }
-.field input:not([type]) {
+.field input:not([type]), .field input[type="password"] {
   width: 100%; font: inherit; padding: 6px 10px; border-radius: 6px;
   border: 1px solid var(--line); background: var(--bg); color: var(--ink);
 }
@@ -108,3 +108,6 @@ button.danger { border-color: var(--bad); color: var(--bad); }
 .stats dt { font-size: 13px; color: var(--muted); }
 .stats dd { margin: 0; font-size: 18px; font-variant-numeric: tabular-nums; }
 .modes:has(input[value="bypassPermissions"]:checked) .bypass-warning { display: block; }
+.warning > :first-child { margin-top: 0; }
+.warning > :last-child { margin-bottom: 0; }
+.warning ul { padding-left: 20px; }

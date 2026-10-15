@@ -15,6 +15,7 @@ from urllib.parse import urlsplit
 
 from .accounts import User
 from .database import Database
+from .providers import Provider
 from .runtime import (
     Clone,
     CloneState,
@@ -33,11 +34,6 @@ log = logging.getLogger(__name__)
 NAME_MAX_LENGTH = 60
 CLONE_POLL_INTERVAL = 1.0  # seconds between two looks at a clone or a sign-in in progress
 CLONE_OUTPUT_LINES = 40  # the end of what git printed: its progress, or why it failed
-
-
-class Provider(StrEnum):
-    GITHUB = "github"
-    GITLAB = "gitlab"
 
 
 PROVIDERS = {"github.com": Provider.GITHUB, "gitlab.com": Provider.GITLAB}

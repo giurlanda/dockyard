@@ -85,9 +85,9 @@ class AccessProxy:
             self._reachable = True
 
 
-def instance_env(data_dir: Path) -> dict[str, str]:
+def instance_env(data_dir: Path, secret_key: str | None = None) -> dict[str, str]:
     return {
-        "DOCKYARD_SECRET_KEY": Fernet.generate_key().decode(),
+        "DOCKYARD_SECRET_KEY": secret_key or Fernet.generate_key().decode(),
         "DOCKYARD_FIRST_ADMINISTRATOR_EMAIL": ADMINISTRATOR,
         "DOCKYARD_CF_ACCESS_TEAM": TEAM,
         "DOCKYARD_CF_ACCESS_AUD": AUDIENCE,
@@ -111,11 +111,13 @@ def start_dockyard(
 ) -> Callable[..., TestClient]:
     """Start Dockyard with the standard test Instance configuration, plus overrides.
 
-    An override of None removes that setting. Every start shares the same data and Runtime.
+    An override of None removes that setting. Every start shares the same data, Runtime and
+    secret key: it is the same Instance.
     """
+    secret_key = Fernet.generate_key().decode()
 
     def start(**overrides: str | None) -> TestClient:
-        env = instance_env(tmp_path)
+        env = instance_env(tmp_path, secret_key)
         for name, value in overrides.items():
             if value is None:
                 env.pop(name, None)
