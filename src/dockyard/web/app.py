@@ -15,12 +15,14 @@ from starlette.responses import Response
 from ..accounts import Accounts
 from ..database import Database
 from ..identity import SigningKeys, identity_for
+from ..projects import Projects
 from ..runtime import Runtime, RuntimeUnavailable
 from ..settings import Settings
 from .claude_account import claude_account_routes, claude_account_status
 from .guard import CurrentUser, IdentityGuard
 from .i18n import LANGUAGE_COOKIE, Language
 from .pages import Pages, is_api
+from .projects import projects_routes
 
 ONE_YEAR = 365 * 24 * 3600
 
@@ -34,6 +36,11 @@ def create_app(
     database.migrate()
     accounts = Accounts(database)
     accounts.bootstrap_first_administrator(settings.first_administrator_email)
+    projects = Projects(database, runtime)
+    try:
+        projects.resume_clones()
+    except RuntimeUnavailable as error:
+        log.warning("Cannot follow the clones in progress: %s", error)
     pages = Pages()
 
     app = FastAPI(title="Dockyard", docs_url=None, redoc_url=None, openapi_url=None)
@@ -63,6 +70,7 @@ def create_app(
             "dashboard.html",
             user=user,
             claude_account=claude_account_status(runtime, user),
+            projects=projects.list(user),
         )
 
     @app.post("/language")
@@ -78,6 +86,7 @@ def create_app(
         return {"email": user.email, "role": user.role}
 
     app.include_router(claude_account_routes(runtime, pages))
+    app.include_router(projects_routes(projects, pages))
     app.mount("/static", StaticFiles(packages=[("dockyard.web", "static")]), name="static")
     return app
 

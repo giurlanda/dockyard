@@ -14,15 +14,30 @@ import requests
 from docker.errors import APIError, DockerException, ImageNotFound, NotFound
 from docker.models.containers import Container
 
-from . import LOGIN_TIMEOUT, LoginNotRunning, RuntimeUnavailable
+from . import (
+    CLONE_TIMEOUT,
+    LOGIN_TIMEOUT,
+    Clone,
+    CloneState,
+    LoginNotRunning,
+    ProjectStatus,
+    RuntimeUnavailable,
+    project_path,
+)
 
 UID = 1000  # "ubuntu", the Base Image's non-root user
 CLAUDE_CONFIG_DIR = "/home/ubuntu/.claude"  # CLAUDE_CONFIG_DIR in the Base Image
 CREDENTIALS = f"{CLAUDE_CONFIG_DIR}/.credentials.json"
+# The Base Image's working directory. Never a volume mount point: with Docker 29 that resets the
+# volume's root to root:root. Project paths are below it.
+WORKSPACE = "/workspace"
+HANDOVER_MOUNT = "/volume"  # where a new volume is mounted to hand it to the non-root user
 
 KIND_LABEL = "dockyard.kind"
 USER_LABEL = "dockyard.user"
+PROJECT_LABEL = "dockyard.project"
 LOGIN_ENVIRONMENT = "login-environment"
+CLONE = "clone"
 
 # Every environment that is not a Privileged Project runs with these.
 HARDENING: dict[str, Any] = {
@@ -113,21 +128,109 @@ class DockerRuntime:
                     if "already in progress" not in str(error):  # its program ended: auto-removed
                         raise
 
+    def start_clone(self, user: str, project: str, repository: str) -> None:
+        path = project_path(project)
+        labels = {**_labels(CLONE, user), PROJECT_LABEL: project}
+        with self._docker():
+            code = self._client.volumes.create(
+                _code_volume(project), labels={**_labels("code", user), PROJECT_LABEL: project}
+            ).name
+            self._hand_to_non_root_user(code, labels={**labels, KIND_LABEL: "code-chown"})
+            clone = self._client.containers.create(
+                self._base_image,
+                [
+                    "timeout",
+                    f"{CLONE_TIMEOUT}",
+                    "git",
+                    "clone",
+                    "--progress",
+                    "--",
+                    repository,
+                    path,
+                ],
+                name=f"dockyard-{CLONE}-{project}",
+                volumes={code: {"bind": path, "mode": "rw"}},
+                working_dir=WORKSPACE,
+                # A repository that is not public asks for a user name: fail instead of waiting.
+                environment={"GIT_TERMINAL_PROMPT": "0"},
+                labels=labels,
+                init=True,
+                mem_limit="1g",
+                nano_cpus=1_000_000_000,
+                **HARDENING,
+            )
+            clone.start()
+
+    def clone(self, project: str) -> Clone | None:
+        with self._docker():
+            clones = self._project_containers(project, CLONE)
+            if not clones:
+                return None
+            state = clones[0].attrs["State"]
+            output = clones[0].logs().decode(errors="replace")
+        if state["Status"] in ("created", "running", "restarting"):
+            return Clone(CloneState.RUNNING, output)
+        succeeded = state["ExitCode"] == 0
+        return Clone(CloneState.SUCCEEDED if succeeded else CloneState.FAILED, output)
+
+    def finish_clone(self, project: str) -> None:
+        with self._docker():
+            for clone in self._project_containers(project, CLONE):
+                clone.remove(force=True)
+
+    def project_status(self, project: str) -> ProjectStatus:
+        with self._docker():
+            if self._project_containers(project, CLONE):
+                return ProjectStatus.CLONING
+            try:
+                self._client.volumes.get(_code_volume(project))
+            except NotFound:
+                return ProjectStatus.MISSING
+            return ProjectStatus.STOPPED
+
+    def remove_project(self, project: str, *, code: bool) -> None:
+        with self._docker():
+            for container in self._project_containers(project):
+                with suppress(NotFound):
+                    container.remove(force=True)
+            if code:
+                with suppress(NotFound):
+                    self._client.volumes.get(_code_volume(project)).remove(force=True)
+
+    def _project_containers(self, project: str, kind: str | None = None) -> list[Container]:
+        labels = [f"{PROJECT_LABEL}={project}"] + ([f"{KIND_LABEL}={kind}"] if kind else [])
+        return self._client.containers.list(all=True, filters={"label": labels})
+
+    def _hand_to_non_root_user(self, volume: str, labels: dict[str, str]) -> None:
+        """A new volume belongs to root: hand it to the non-root user, with only CAP_CHOWN.
+
+        Mounted where root reaches it without reading other directories: with only CAP_CHOWN,
+        root cannot go through /home/ubuntu (mode 0750).
+        """
+        exit_status = self._run_job(
+            ["chown", f"{UID}:{UID}", HANDOVER_MOUNT],
+            volumes={volume: {"bind": HANDOVER_MOUNT, "mode": "rw"}},
+            labels=labels,
+            user="root",
+            cap_add=["CHOWN"],
+        )
+        if exit_status != 0:
+            raise RuntimeUnavailable(
+                f"Could not hand {volume} to the non-root user: chown exited with {exit_status}"
+            )
+
     def _ensure_claude_config(self, user: str) -> str:
         """The User's own Claude config volume, created on first use."""
         name = _claude_config_volume(user)
         try:
             self._client.volumes.get(name)
         except NotFound:
-            self._client.volumes.create(name, labels=_labels("claude-config", user))
-            # A new volume belongs to root: hand it to the non-root user, with only CAP_CHOWN.
-            self._run_job(
-                ["chown", f"{UID}:{UID}", CLAUDE_CONFIG_DIR],
-                volumes={name: {"bind": CLAUDE_CONFIG_DIR, "mode": "rw"}},
-                labels=_labels("claude-config-chown", user),
-                user="root",
-                cap_add=["CHOWN"],
-            )
+            volume = self._client.volumes.create(name, labels=_labels("claude-config", user))
+            try:
+                self._hand_to_non_root_user(name, labels=_labels("claude-config-chown", user))
+            except RuntimeUnavailable:
+                volume.remove(force=True)  # never left to root: the next use tries again
+                raise
         return name
 
     def _login(self, user: str) -> Container | None:
@@ -218,6 +321,10 @@ def _read_ahead(response: Any, sock: socket.socket) -> bytes:
 
 def _claude_config_volume(user: str) -> str:
     return f"dockyard-claude-config-{user}"
+
+
+def _code_volume(project: str) -> str:
+    return f"dockyard-code-{project}"
 
 
 def _labels(kind: str, user: str) -> dict[str, str]:

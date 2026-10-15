@@ -131,6 +131,16 @@ def dockyard(start_dockyard: Callable[..., TestClient]) -> TestClient:
     return start_dockyard()
 
 
+def wait_until(condition: Callable[[], bool], timeout: float = 10) -> bool:
+    """For what Dockyard does in the background, such as a clone."""
+    deadline = time.monotonic() + timeout
+    while not condition():
+        if time.monotonic() > deadline:
+            return False
+        time.sleep(0.05)
+    return True
+
+
 @pytest.fixture
 def add_user(start_dockyard: Callable[..., TestClient]) -> Callable[[str], None]:
     """Until Invitations exist, a User is added the one way the public interface allows: by

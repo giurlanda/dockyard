@@ -32,6 +32,19 @@ MIGRATIONS = (
     DROP TABLE users;
     ALTER TABLE users_new RENAME TO users;
     """,
+    # id names the Project in the Runtime and its path, /workspace/<id>: random, never reused.
+    """
+    CREATE TABLE projects (
+        id         TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(8)))),
+        owner      TEXT NOT NULL REFERENCES users (runtime_id),
+        name       TEXT NOT NULL,
+        repository TEXT NOT NULL,
+        provider   TEXT NOT NULL CHECK (provider IN ('github', 'gitlab')),
+        visibility TEXT NOT NULL CHECK (visibility IN ('public', 'private')),
+        created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
+    );
+    CREATE INDEX projects_owner ON projects (owner);
+    """,
 )
 
 

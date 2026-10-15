@@ -1,0 +1,15 @@
+{% extends "base.html" %}
+{% block title %}{{ t("clone_failed.title") }}{% endblock %}
+{% block header %}{% include "_user.html" %}{% endblock %}
+{% block content %}
+  <section class="panel">
+    <h1 class="failed">{{ t("clone_failed.title") }}</h1>
+    <p>{{ t("clone_failed.explain", repository=report.repository) }}</p>
+    <h2>{{ t("clone_failed.output") }}</h2>
+    <pre class="output">{{ report.output }}</pre>
+    <div class="actions">
+      <a class="button primary" href="{{ retry }}">{{ t("clone_failed.retry") }}</a>
+      <a href="/">{{ t("notice.home") }}</a>
+    </div>
+  </section>
+{% endblock %}

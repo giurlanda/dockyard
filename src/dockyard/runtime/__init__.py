@@ -7,9 +7,18 @@ the same behaviour.
 
 from __future__ import annotations
 
+from dataclasses import dataclass
+from enum import StrEnum
 from typing import Protocol
 
 LOGIN_TIMEOUT = 15 * 60  # seconds a login environment waits for its User before it ends
+CLONE_TIMEOUT = 30 * 60  # seconds a clone may take before it is given up
+
+
+def project_path(project: str) -> str:
+    """Where a Project's code lives in its environment. Claude Code keys trust, Remote Control
+    and transcripts by this path, so each Project has its own."""
+    return f"/workspace/{project}"
 
 
 class RuntimeUnavailable(Exception):
@@ -18,6 +27,26 @@ class RuntimeUnavailable(Exception):
 
 class LoginNotRunning(Exception):
     """The User has no login environment running."""
+
+
+class CloneState(StrEnum):
+    RUNNING = "running"
+    SUCCEEDED = "succeeded"
+    FAILED = "failed"
+
+
+@dataclass(frozen=True)
+class Clone:
+    state: CloneState
+    output: str  # what git printed so far, progress included
+
+
+class ProjectStatus(StrEnum):
+    """What the Runtime holds for a Project."""
+
+    CLONING = "cloning"  # its clone has not been finished with yet
+    STOPPED = "stopped"  # its code is there, nothing runs
+    MISSING = "missing"  # nothing is there
 
 
 class Tty(Protocol):
@@ -65,3 +94,26 @@ class Runtime(Protocol):
         ...
 
     def stop_login_environment(self, user: str) -> None: ...
+
+    def start_clone(self, user: str, project: str, repository: str) -> None:
+        """Give the Project its own code volume, owned by the non-root user, and start cloning
+        the public `repository` into project_path(project), as the non-root user.
+
+        The clone stays (see `clone`) until `finish_clone` or `remove_project`; it is given up
+        after CLONE_TIMEOUT.
+        """
+        ...
+
+    def clone(self, project: str) -> Clone | None:
+        """The Project's clone, or None once it has been finished with (or never started)."""
+        ...
+
+    def finish_clone(self, project: str) -> None:
+        """Let go of a clone that ended, keeping the code it cloned."""
+        ...
+
+    def project_status(self, project: str) -> ProjectStatus: ...
+
+    def remove_project(self, project: str, *, code: bool) -> None:
+        """Remove everything the Project runs (its clone included), and its code only if asked."""
+        ...

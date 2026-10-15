@@ -1,0 +1,30 @@
+{% extends "base.html" %}
+{% block title %}{{ project.name }}{% endblock %}
+{% block header %}{% include "_user.html" %}{% endblock %}
+{% block content %}
+  <section class="panel">
+    <div class="panel-heading">
+      <h1>{{ project.name }}</h1>
+      {% include "_project_status.html" %}
+    </div>
+    <p>{{ t("project.repository") }}:
+      <a href="{{ project.repository }}" target="_blank" rel="noopener noreferrer">{{ project.repository }}</a></p>
+    {% if project.status == "cloning" %}
+      <p>{{ t("project.cloning") }}</p>
+      <pre class="output" role="log" aria-label="{{ t('project.clone_output') }}"
+           data-clone="/api/projects/{{ project.id }}/clone">{{ clone.output if clone else "" }}</pre>
+    {% elif project.status == "error" %}
+      <p class="warning">{{ t("project.error") }}</p>
+    {% endif %}
+    <p><a href="/">{{ t("notice.home") }}</a></p>
+  </section>
+  <section class="panel" aria-labelledby="delete">
+    <h2 id="delete">{{ t("project.delete.heading") }}</h2>
+    <p class="muted">{{ t("project.delete.explain") }}</p>
+    <form method="post" action="/projects/{{ project.id }}/delete">
+      <label class="check"><input type="checkbox" name="delete_code"> {{ t("project.delete.code") }}</label>
+      <div class="actions"><button class="danger">{{ t("project.delete.button") }}</button></div>
+    </form>
+  </section>
+{% endblock %}
+{% block scripts %}<script src="/static/project.js"></script>{% endblock %}

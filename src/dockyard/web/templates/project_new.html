@@ -1,0 +1,36 @@
+{% extends "base.html" %}
+{% block title %}{{ t("project_new.title") }}{% endblock %}
+{% block header %}{% include "_user.html" %}{% endblock %}
+{% block content %}
+  <section class="panel">
+    <h1>{{ t("project_new.title") }}</h1>
+    {% if problem %}<p class="outcome bad" role="alert">{{ t(problem) }}</p>{% endif %}
+    <form class="fields" method="post" action="/projects">
+      <div class="field">
+        <label for="repository">{{ t("project_new.repository") }}</label>
+        <input id="repository" name="repository" value="{{ repository }}" inputmode="url"
+               autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false"
+               placeholder="https://github.com/…" aria-describedby="repository-hint" required>
+        <p class="hint muted" id="repository-hint">{{ t("project_new.repository_hint") }}</p>
+      </div>
+      <div class="field">
+        <label for="name">{{ t("project_new.name") }}</label>
+        <input id="name" name="name" value="{{ name }}" maxlength="60" autocomplete="off"
+               aria-describedby="name-hint" required>
+        <p class="hint muted" id="name-hint">{{ t("project_new.name_hint") }}</p>
+      </div>
+      <fieldset class="field">
+        <legend>{{ t("project_new.visibility") }}</legend>
+        <label class="check">
+          <input type="radio" name="visibility" value="public" checked aria-describedby="public-hint">
+          {{ t("project_new.public") }}
+        </label>
+        <p class="hint muted" id="public-hint">{{ t("project_new.public_hint") }}</p>
+      </fieldset>
+      <div class="actions">
+        <button class="primary">{{ t("project_new.create") }}</button>
+        <a href="/">{{ t("notice.home") }}</a>
+      </div>
+    </form>
+  </section>
+{% endblock %}

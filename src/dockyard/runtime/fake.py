@@ -6,8 +6,19 @@ import queue
 import threading
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
+from dataclasses import dataclass, field
+from urllib.parse import urlsplit
 
-from . import LOGIN_TIMEOUT, LoginNotRunning, RuntimeUnavailable, Tty
+from . import (
+    LOGIN_TIMEOUT,
+    Clone,
+    CloneState,
+    LoginNotRunning,
+    ProjectStatus,
+    RuntimeUnavailable,
+    Tty,
+    project_path,
+)
 
 
 class FakeRuntime:
@@ -17,6 +28,28 @@ class FakeRuntime:
         self._logins: dict[str, _Login] = {}
         self._login_timeout = login_timeout
         self._reachable = True
+        self._repositories: set[str] = set()  # the public repositories that exist
+        self._projects: dict[str, _Project] = {}
+        self._clones_paused = False
+
+    def publish_repository(self, url: str) -> None:
+        """From now on, `url` is a public repository that can be cloned."""
+        with self._lock:
+            self._repositories.add(url)
+
+    @contextmanager
+    def clones_paused(self) -> Iterator[None]:
+        """Clones started meanwhile keep running until the end of the block, then end."""
+        with self._lock:
+            self._clones_paused = True
+        try:
+            yield
+        finally:
+            with self._lock:
+                self._clones_paused = False
+                for project in self._projects.values():
+                    if project.clone and project.clone.state == CloneState.RUNNING:
+                        project.clone = project.clone_outcome
 
     @contextmanager
     def unavailable(self) -> Iterator[None]:
@@ -70,6 +103,58 @@ class FakeRuntime:
         if login:
             login.end()
 
+    def start_clone(self, user: str, project: str, repository: str) -> None:
+        self.check_reachable()
+        # What git prints when it clones, as the Runtime contract suite sees it.
+        started = f"Cloning into '{project_path(project)}'...\n"
+        if repository in self._repositories:
+            outcome = Clone(
+                CloneState.SUCCEEDED,
+                started + "remote: Enumerating objects: 3, done.\n"
+                "Receiving objects: 100% (3/3), done.\n",
+            )
+        else:
+            host = urlsplit(repository).hostname
+            outcome = Clone(
+                CloneState.FAILED,
+                started + f"fatal: could not read Username for 'https://{host}': "
+                "terminal prompts disabled\n",
+            )
+        with self._lock:
+            running = Clone(CloneState.RUNNING, started)
+            self._projects[project] = _Project(
+                code=True,
+                clone=running if self._clones_paused else outcome,
+                clone_outcome=outcome,
+            )
+
+    def clone(self, project: str) -> Clone | None:
+        self.check_reachable()
+        with self._lock:
+            found = self._projects.get(project)
+            return found.clone if found else None
+
+    def finish_clone(self, project: str) -> None:
+        self.check_reachable()
+        with self._lock:
+            if found := self._projects.get(project):
+                found.clone = None
+
+    def project_status(self, project: str) -> ProjectStatus:
+        self.check_reachable()
+        with self._lock:
+            found = self._projects.get(project)
+            if found and found.clone:
+                return ProjectStatus.CLONING
+            return ProjectStatus.STOPPED if found and found.code else ProjectStatus.MISSING
+
+    def remove_project(self, project: str, *, code: bool) -> None:
+        self.check_reachable()
+        with self._lock:
+            if found := self._projects.get(project):
+                found.clone = None
+                found.code = found.code and not code
+
     def _sign_in(self, user: str) -> None:
         with self._lock:
             self._signed_in.add(user)
@@ -78,6 +163,13 @@ class FakeRuntime:
         with self._lock:
             if self._logins.get(user) is login:
                 del self._logins[user]
+
+
+@dataclass
+class _Project:
+    code: bool  # its code volume exists
+    clone: Clone | None
+    clone_outcome: Clone = field(repr=False)  # how its clone ends
 
 
 class _Login:

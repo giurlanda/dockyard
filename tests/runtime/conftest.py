@@ -30,6 +30,9 @@ REPO = HERE.parents[1]
 BASE_IMAGE = "dockyard-base:test"
 CONTRACT_IMAGE = "dockyard-base:contract"
 TEST_LABEL = "dockyard.contract-test"
+# Real repositories on github.com: the Docker variant clones from the internet.
+PUBLIC_REPOSITORY = "https://github.com/octocat/Hello-World"
+MISSING_REPOSITORY = "https://github.com/octocat/dockyard-no-such-repository"
 
 MakeRuntime = Callable[..., Runtime]
 
@@ -112,7 +115,13 @@ def _wait_until_serving(proxy: Any) -> str:
 def make_runtime(request: pytest.FixtureRequest) -> MakeRuntime:
     """Builds the Runtime under test, with optional settings (e.g. login_timeout)."""
     if request.param == "fake":
-        return FakeRuntime
+
+        def make_fake(**settings: Any) -> Runtime:
+            fake = FakeRuntime(**settings)
+            fake.publish_repository(PUBLIC_REPOSITORY)  # as it is on github.com
+            return fake
+
+        return make_fake
     image = request.getfixturevalue("contract_image")
     proxy = request.getfixturevalue("socket_proxy")
 
@@ -146,6 +155,11 @@ def new_user(request: pytest.FixtureRequest) -> Iterator[Callable[[], str]]:
                     container.remove(force=True)
             for volume in daemon.volumes.list(filters=label):
                 _remove_when_unused(volume)
+
+
+def new_project() -> str:
+    """A new Project, by its id. Its resources carry its User's label, so new_user cleans up."""
+    return secrets.token_hex(8)
 
 
 def _remove_when_unused(volume: Any) -> None:

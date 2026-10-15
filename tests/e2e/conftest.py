@@ -25,6 +25,7 @@ from dockyard.web import create_app
 ADMINISTRATOR = "first.administrator@dockyard.example.com"
 DEV_HEADER = "X-Dockyard-Dev-Email"
 PHONE = {"width": 375, "height": 740}
+PUBLIC_REPOSITORY = "https://github.com/octocat/Hello-World"
 
 
 def _free_port() -> int:
@@ -35,7 +36,14 @@ def _free_port() -> int:
 
 
 @pytest.fixture
-def dockyard_url(tmp_path: Path) -> Iterator[str]:
+def runtime() -> FakeRuntime:
+    fake = FakeRuntime()
+    fake.publish_repository(PUBLIC_REPOSITORY)
+    return fake
+
+
+@pytest.fixture
+def dockyard_url(tmp_path: Path, runtime: FakeRuntime) -> Iterator[str]:
     data_dir = tmp_path / "dockyard-data"
     settings = Settings.from_env(
         {
@@ -48,7 +56,7 @@ def dockyard_url(tmp_path: Path) -> Iterator[str]:
     port = _free_port()
     server = uvicorn.Server(
         uvicorn.Config(
-            create_app(settings, FakeRuntime()), host="127.0.0.1", port=port, log_level="warning"
+            create_app(settings, runtime), host="127.0.0.1", port=port, log_level="warning"
         )
     )
     thread = threading.Thread(target=server.run, daemon=True)
