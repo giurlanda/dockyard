@@ -45,6 +45,14 @@ MIGRATIONS = (
     );
     CREATE INDEX projects_owner ON projects (owner);
     """,
+    # should_run: the User wants its server running. Whether it runs is read from the Runtime;
+    # a Project that should run but has no environment waits for its owner's Claude Account.
+    """
+    ALTER TABLE projects ADD COLUMN permission_mode TEXT NOT NULL DEFAULT 'default'
+        CHECK (permission_mode IN ('default', 'acceptEdits', 'auto', 'bypassPermissions'));
+    ALTER TABLE projects ADD COLUMN should_run INTEGER NOT NULL DEFAULT 0
+        CHECK (should_run IN (0, 1));
+    """,
 )
 
 

@@ -13,6 +13,11 @@ from typing import Protocol
 
 LOGIN_TIMEOUT = 15 * 60  # seconds a login environment waits for its User before it ends
 CLONE_TIMEOUT = 30 * 60  # seconds a clone may take before it is given up
+DEFAULT_DNS = ("1.1.1.1", "9.9.9.9")  # the DNS servers of Projects, unless configured
+# What each Project environment may use. Until the Instance limits exist, the same for all.
+PROJECT_CPUS = 2
+PROJECT_MEMORY = 4 * 1024**3  # bytes
+PROJECT_PIDS_LIMIT = 2048
 
 
 def project_path(project: str) -> str:
@@ -27,6 +32,10 @@ class RuntimeUnavailable(Exception):
 
 class LoginNotRunning(Exception):
     """The User has no login environment running."""
+
+
+class ProjectMissing(Exception):
+    """The Project's code is not there."""
 
 
 class CloneState(StrEnum):
@@ -45,6 +54,8 @@ class ProjectStatus(StrEnum):
     """What the Runtime holds for a Project."""
 
     CLONING = "cloning"  # its clone has not been finished with yet
+    RUNNING = "running"  # its Remote Control Server runs
+    FAILED = "failed"  # its environment is there, its Remote Control Server is not running
     STOPPED = "stopped"  # its code is there, nothing runs
     MISSING = "missing"  # nothing is there
 
@@ -70,6 +81,11 @@ class Runtime(Protocol):
 
     def check_reachable(self) -> None:
         """Raises RuntimeUnavailable."""
+        ...
+
+    def ensure_infrastructure(self) -> None:
+        """Create what every Project needs if it is missing: the Projects network, where nothing
+        else is attached and Projects cannot reach each other."""
         ...
 
     def claude_account_connected(self, user: str) -> bool:
@@ -112,8 +128,31 @@ class Runtime(Protocol):
         """Let go of a clone that ended, keeping the code it cloned."""
         ...
 
+    def start_project(self, user: str, project: str, *, name: str, permission_mode: str) -> None:
+        """(Re)create the Project's environment and start its Remote Control Server in it.
+
+        Before it starts, the User's Claude config trusts project_path(project). The server is
+        `claude remote-control --name=<name> --spawn worktree --permission-mode <mode>`, run in
+        project_path(project) by the non-root user with the User's Claude config; it restarts
+        when it crashes and when Docker restarts. The Project's code and home stay across starts.
+
+        Raises ProjectMissing.
+        """
+        ...
+
+    def stop_project(self, project: str) -> None:
+        """Stop the Project's Remote Control Server and remove its environment, keeping its
+        code and home."""
+        ...
+
+    def project_log(self, project: str) -> str:
+        """What the Project's Remote Control Server printed since its environment started;
+        "" when stopped."""
+        ...
+
     def project_status(self, project: str) -> ProjectStatus: ...
 
     def remove_project(self, project: str, *, code: bool) -> None:
-        """Remove everything the Project runs (its clone included), and its code only if asked."""
+        """Remove everything the Project runs (its clone included), and its code and home only
+        if asked."""
         ...

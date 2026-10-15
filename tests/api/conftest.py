@@ -151,3 +151,20 @@ def add_user(start_dockyard: Callable[..., TestClient]) -> Callable[[str], None]
         start_dockyard(DOCKYARD_FIRST_ADMINISTRATOR_EMAIL=email)
 
     return add
+
+
+def connect_claude_account(
+    dockyard: TestClient, headers: dict[str, str], *, start: bool = True
+) -> None:
+    """Sign in through the login terminal, as a User does (start=False: one already started)."""
+    if start:
+        dockyard.post("/api/claude-account/login", headers=headers)
+    with dockyard.websocket_connect("/ws/claude-account/login", headers=headers) as terminal:
+        shown = ""
+        while "oauth/authorize" not in shown:
+            shown += terminal.receive_bytes().decode(errors="replace")
+        terminal.send_json({"type": "input", "data": "the-code-from-claude-ai\r"})
+        while "Login successful." not in shown:
+            shown += terminal.receive_bytes().decode(errors="replace")
+    status = dockyard.get("/api/claude-account", headers=headers).json()
+    assert status["connected"], status

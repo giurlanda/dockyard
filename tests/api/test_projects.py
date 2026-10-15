@@ -43,10 +43,10 @@ def test_a_user_creates_a_public_project_that_is_cloned_and_listed(
     assert project["name"] == "Hello World"
     assert project["repository"] == REPOSITORY
     assert project["visibility"] == "public"
-    assert wait_until(lambda: status_of(dockyard, signed_in, project["id"]) == "stopped")
+    assert wait_until(lambda: status_of(dockyard, signed_in, project["id"]) == "waiting")
     listed = dockyard.get("/api/projects", headers=signed_in).json()
     assert [(p["id"], p["name"], p["status"]) for p in listed] == [
-        (project["id"], "Hello World", "stopped")
+        (project["id"], "Hello World", "waiting")
     ]
 
 
@@ -132,7 +132,7 @@ def test_while_a_project_clones_its_user_sees_it_cloning_with_gits_progress(
         assert clone_of(dockyard, signed_in, project["id"])["state"] == "running"
 
     assert wait_until(lambda: clone_of(dockyard, signed_in, project["id"])["state"] == "succeeded")
-    assert wait_until(lambda: status_of(dockyard, signed_in, project["id"]) == "stopped")
+    assert wait_until(lambda: status_of(dockyard, signed_in, project["id"]) == "waiting")
 
 
 def test_each_project_is_cloned_into_a_path_of_its_own(
@@ -239,7 +239,7 @@ def clone_of(dockyard: TestClient, headers: dict[str, str], project: str) -> Any
 
 
 def cloned(dockyard: TestClient, headers: dict[str, str]) -> str:
-    """A new Project, once cloned."""
+    """A new Project, once cloned (it then waits for the Claude Account)."""
     project: str = create(dockyard, headers).json()["id"]
-    assert wait_until(lambda: status_of(dockyard, headers, project) == "stopped")
+    assert wait_until(lambda: status_of(dockyard, headers, project) == "waiting")
     return project

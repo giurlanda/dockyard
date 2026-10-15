@@ -4,21 +4,68 @@
 # in its terminal after a prompt that does not end its line, and a non-empty code writes the
 # credentials file into the Claude config.
 # It also reports its terminal size, so the suite sees resizes arrive.
+#
+# `claude remote-control ...` behaves like the real one where the Runtime is concerned: it stops
+# at the "Quick safety check" prompt unless the Claude config trusts its directory, and keys its
+# Remote Control environment by that directory in the Claude config. It reports what it sees
+# from inside the Project's environment, so the suite can check how it runs.
+#
 # The in-memory fake Runtime (dockyard.runtime.fake) simulates exactly this program.
 set -u
-if [ "$*" != "auth login" ]; then
-  echo "stand-in claude: unsupported: $*" >&2
-  exit 2
-fi
-echo "Opening browser to sign in…"
-echo "If the browser didn't open, visit: https://claude.com/cai/oauth/authorize?stand-in=1"
-printf 'Paste code here if prompted > '
-IFS= read -r code
-echo "Terminal size: $(stty size)"
-if [ -z "$code" ]; then
-  echo "Login failed: no code."
-  exit 1
-fi
-umask 077
-printf '{"claudeAiOauth":{"accessToken":"%s"}}\n' "$code" > "$CLAUDE_CONFIG_DIR/.credentials.json"
-echo "Login successful."
+
+login() {
+  echo "Opening browser to sign in…"
+  echo "If the browser didn't open, visit: https://claude.com/cai/oauth/authorize?stand-in=1"
+  printf 'Paste code here if prompted > '
+  IFS= read -r code
+  echo "Terminal size: $(stty size)"
+  if [ -z "$code" ]; then
+    echo "Login failed: no code."
+    exit 1
+  fi
+  umask 077
+  printf '{"claudeAiOauth":{"accessToken":"%s"}}\n' "$code" > "$CLAUDE_CONFIG_DIR/.credentials.json"
+  echo "Login successful."
+}
+
+remote_control() {
+  local config="$CLAUDE_CONFIG_DIR/.claude.json"
+  echo "$*"
+  echo "in $PWD"
+  if ! jq -e --arg p "$PWD" '.projects[$p].hasTrustDialogAccepted == true' "$config" \
+      >/dev/null 2>&1; then
+    echo "Quick safety check: is this a project you created or one you trust?"
+    exec sleep infinity
+  fi
+  echo "trusted: $(jq -r '[.projects | to_entries[] | select(.value.hasTrustDialogAccepted)
+    | .key] | sort | join(" ")' "$config")"
+  echo "claude config mode: $(stat -c %a "$config")"
+  # Like Claude Code's bridge pointer: one Remote Control environment per directory.
+  local pointer="$CLAUDE_CONFIG_DIR/projects/${PWD//\//-}/bridge-pointer"
+  if [ ! -s "$pointer" ]; then
+    mkdir -p "$(dirname "$pointer")"
+    od -An -N8 -tx1 /dev/urandom | tr -d ' \n' > "$pointer"
+  fi
+  echo "environment: $(cat "$pointer")"
+  local starts=$(( $(cat ~/.stand-in-starts 2>/dev/null || echo 0) + 1 ))
+  echo "$starts" > ~/.stand-in-starts
+  echo "starts: $starts"
+  echo "code: $(git log -1 --format=%s 2>&1)"
+  echo "user: $(id -u)"
+  echo "capabilities: $(awk '/^CapEff/ {print $2}' /proc/self/status)"
+  echo "no new privileges: $(awk '/^NoNewPrivs/ {print $2}' /proc/self/status)"
+  echo "pids limit: $(cat /sys/fs/cgroup/pids.max)"
+  echo "memory limit: $(cat /sys/fs/cgroup/memory.max)"
+  echo "cpu limit: $(cat /sys/fs/cgroup/cpu.max)"
+  echo "dns: $(sed -n 's/^# ExtServers: \[\(.*\)\]$/\1/p' /etc/resolv.conf)"
+  echo "anthropic environment: $(env | grep -oE '^(ANTHROPIC|CLAUDE_CODE)_[A-Z_]+' \
+    | sort | paste -sd ' ' -)"
+  echo "Remote Control ready"
+  exec sleep infinity
+}
+
+case "${1:-}" in
+  auth) [ "$*" = "auth login" ] && login ;;
+  remote-control) remote_control "$@" ;;
+  *) echo "stand-in claude: unsupported: $*" >&2; exit 2 ;;
+esac

@@ -27,6 +27,19 @@
         </label>
         <p class="hint muted" id="public-hint">{{ t("project_new.public_hint") }}</p>
       </fieldset>
+      <fieldset class="field modes" aria-describedby="mode-hint">
+        <legend>{{ t("project_new.permission_mode") }}</legend>
+        <p class="hint muted" id="mode-hint">{{ t("project_new.permission_mode_hint") }}</p>
+        {% for mode in permission_modes %}
+          <label class="check">
+            <input type="radio" name="permission_mode" value="{{ mode }}"{{ " checked" if mode == permission_mode }}
+                   aria-describedby="{{ mode }}-hint">
+            {{ t("permission_mode." ~ mode) }}
+          </label>
+          <p class="hint muted" id="{{ mode }}-hint">{{ t("permission_mode." ~ mode ~ "_hint") }}</p>
+        {% endfor %}
+        <p class="warning bypass-warning" role="note">{{ t("permission_mode.bypass_warning") }}</p>
+      </fieldset>
       <div class="actions">
         <button class="primary">{{ t("project_new.create") }}</button>
         <a href="/">{{ t("notice.home") }}</a>

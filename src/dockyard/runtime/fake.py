@@ -3,28 +3,43 @@
 from __future__ import annotations
 
 import queue
+import secrets
 import threading
-from collections.abc import Callable, Iterator
+from collections.abc import Callable, Iterator, Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 from urllib.parse import urlsplit
 
 from . import (
+    DEFAULT_DNS,
     LOGIN_TIMEOUT,
+    PROJECT_CPUS,
+    PROJECT_MEMORY,
+    PROJECT_PIDS_LIMIT,
     Clone,
     CloneState,
     LoginNotRunning,
+    ProjectMissing,
     ProjectStatus,
     RuntimeUnavailable,
     Tty,
     project_path,
 )
 
+# The last commit of every repository the fake publishes, as on github.com/octocat/Hello-World.
+LAST_COMMIT = "Merge pull request #6 from Spaceghost/patch-1"
+
 
 class FakeRuntime:
-    def __init__(self, *, login_timeout: float = LOGIN_TIMEOUT) -> None:
+    def __init__(
+        self, *, dns: Sequence[str] = DEFAULT_DNS, login_timeout: float = LOGIN_TIMEOUT
+    ) -> None:
         self._lock = threading.Lock()
+        self._dns = tuple(dns)
         self._signed_in: set[str] = set()  # Users whose Claude config holds credentials
+        self._trusted: dict[str, set[str]] = {}  # the paths each User's Claude config trusts
+        # Each User's Remote Control environments, by path, as Claude Code keeps them.
+        self._remote_control: dict[str, dict[str, str]] = {}
         self._logins: dict[str, _Login] = {}
         self._login_timeout = login_timeout
         self._reachable = True
@@ -59,6 +74,14 @@ class FakeRuntime:
             yield
         finally:
             self._reachable = True
+
+    def ensure_infrastructure(self) -> None:
+        self.check_reachable()
+
+    def crash(self, project: str) -> None:
+        """The Project's Remote Control Server keeps failing from now on, until started again."""
+        with self._lock:
+            self._projects[project].crashed = True
 
     def check_reachable(self) -> None:
         if not self._reachable:
@@ -140,20 +163,75 @@ class FakeRuntime:
             if found := self._projects.get(project):
                 found.clone = None
 
+    def start_project(self, user: str, project: str, *, name: str, permission_mode: str) -> None:
+        self.check_reachable()
+        with self._lock:
+            found = self._projects.get(project)
+            if not found or not found.code:
+                raise ProjectMissing(project)
+            path = project_path(project)
+            trusted = self._trusted.setdefault(user, set())
+            trusted.add(path)
+            environment = self._remote_control.setdefault(user, {}).setdefault(
+                path, secrets.token_hex(8)
+            )
+            found.starts += 1
+            # What the contract suite's stand-in prints when it starts.
+            report = [
+                f"remote-control --name={name} --spawn worktree"
+                f" --permission-mode {permission_mode}",
+                f"in {path}",
+                f"trusted: {' '.join(sorted(trusted))}",
+                "claude config mode: 600",
+                f"environment: {environment}",
+                f"starts: {found.starts}",
+                f"code: {LAST_COMMIT}",
+                "user: 1000",
+                "capabilities: 0000000000000000",
+                "no new privileges: 1",
+                f"pids limit: {PROJECT_PIDS_LIMIT}",
+                f"memory limit: {PROJECT_MEMORY}",
+                f"cpu limit: {PROJECT_CPUS * 100000} 100000",
+                f"dns: {' '.join(self._dns)}",
+                "anthropic environment: ",
+                "Remote Control ready",
+            ]
+            found.log = "".join(f"{line}\r\n" for line in report)
+            found.crashed = False
+
+    def stop_project(self, project: str) -> None:
+        self.check_reachable()
+        with self._lock:
+            if found := self._projects.get(project):
+                found.log = None
+
+    def project_log(self, project: str) -> str:
+        self.check_reachable()
+        with self._lock:
+            found = self._projects.get(project)
+            return found.log or "" if found else ""
+
     def project_status(self, project: str) -> ProjectStatus:
         self.check_reachable()
         with self._lock:
             found = self._projects.get(project)
             if found and found.clone:
                 return ProjectStatus.CLONING
-            return ProjectStatus.STOPPED if found and found.code else ProjectStatus.MISSING
+            if not found or not found.code:
+                return ProjectStatus.MISSING
+            if found.log is None:
+                return ProjectStatus.STOPPED
+            return ProjectStatus.FAILED if found.crashed else ProjectStatus.RUNNING
 
     def remove_project(self, project: str, *, code: bool) -> None:
         self.check_reachable()
         with self._lock:
             if found := self._projects.get(project):
                 found.clone = None
-                found.code = found.code and not code
+                found.log = None
+                if code:
+                    found.code = False
+                    found.starts = 0  # its home goes with its code
 
     def _sign_in(self, user: str) -> None:
         with self._lock:
@@ -170,6 +248,9 @@ class _Project:
     code: bool  # its code volume exists
     clone: Clone | None
     clone_outcome: Clone = field(repr=False)  # how its clone ends
+    log: str | None = None  # what its server printed, while its environment is there
+    crashed: bool = False  # its server keeps failing
+    starts: int = 0  # how many times its server started, as counted in its home
 
 
 class _Login:

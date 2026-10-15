@@ -59,6 +59,9 @@ def test_every_missing_setting_is_reported_at_once() -> None:
         ("DOCKYARD_DEV_IDENTITY", "maybe"),
         ("DOCKYARD_LISTEN_PORT", "eighty"),
         ("DOCKYARD_LISTEN_PORT", "70000"),
+        ("DOCKYARD_PROJECTS_DNS", "dns.example.com"),
+        ("DOCKYARD_PROJECTS_DNS", "1.1.1.1;9.9.9.9"),
+        ("DOCKYARD_PROJECTS_DNS", ","),
     ],
 )
 def test_dockyard_refuses_to_start_with_an_invalid_setting(

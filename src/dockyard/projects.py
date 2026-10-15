@@ -14,12 +14,19 @@ from urllib.parse import urlsplit
 
 from .accounts import User
 from .database import Database
-from .runtime import Clone, CloneState, ProjectStatus, Runtime, RuntimeUnavailable
+from .runtime import (
+    Clone,
+    CloneState,
+    ProjectMissing,
+    ProjectStatus,
+    Runtime,
+    RuntimeUnavailable,
+)
 
 log = logging.getLogger(__name__)
 
 NAME_MAX_LENGTH = 60
-CLONE_POLL_INTERVAL = 1.0  # seconds between two looks at a clone in progress
+CLONE_POLL_INTERVAL = 1.0  # seconds between two looks at a clone or a sign-in in progress
 CLONE_OUTPUT_LINES = 40  # the end of what git printed: its progress, or why it failed
 
 
@@ -37,17 +44,29 @@ class Visibility(StrEnum):
     PUBLIC = "public"
 
 
+class PermissionMode(StrEnum):
+    """How much Claude may do in the Project without asking, chosen at creation."""
+
+    DEFAULT = "default"
+    ACCEPT_EDITS = "acceptEdits"
+    AUTO = "auto"
+    BYPASS_PERMISSIONS = "bypassPermissions"
+
+
 class Status(StrEnum):
     """The status a User sees, worked out from what the Runtime holds."""
 
     CLONING = "cloning"
+    WAITING = "waiting"  # it should run, but its owner's Claude Account is not connected
+    RUNNING = "running"
     STOPPED = "stopped"
     ERROR = "error"
 
 
 _STATUS = {
     ProjectStatus.CLONING: Status.CLONING,
-    ProjectStatus.STOPPED: Status.STOPPED,
+    ProjectStatus.RUNNING: Status.RUNNING,
+    ProjectStatus.FAILED: Status.ERROR,
     ProjectStatus.MISSING: Status.ERROR,
 }
 
@@ -62,6 +81,7 @@ class Refusal(StrEnum):
     REPOSITORY_HOST = "repository_host"
     NAME_MISSING = "name_missing"
     NAME_INVALID = "name_invalid"
+    CLONING = "cloning"
 
 
 class ProjectRefused(Exception):
@@ -125,6 +145,7 @@ class Project:
     repository: str
     provider: Provider
     visibility: Visibility
+    permission_mode: PermissionMode
     status: Status
 
 
@@ -149,16 +170,26 @@ class Projects:
         self._lock = threading.Lock()
         self._clones: dict[str, CloneReport] = {}  # since Dockyard started
         self._deleting: set[str] = set()
+        self._closed = threading.Event()
 
-    def create(self, owner: User, *, name: str, repository: str, visibility: Visibility) -> Project:
-        """Record the Project and start cloning it. Raises ProjectRefused, RuntimeUnavailable."""
+    def create(
+        self,
+        owner: User,
+        *,
+        name: str,
+        repository: str,
+        visibility: Visibility,
+        permission_mode: PermissionMode = PermissionMode.DEFAULT,
+    ) -> Project:
+        """Record the Project and start cloning it; once cloned, it starts (or waits for its
+        owner's Claude Account). Raises ProjectRefused, RuntimeUnavailable."""
         name = valid_name(name)
         source = parse_repository(repository)
         with self._db.transaction() as conn:
             (project,) = conn.execute(
-                "INSERT INTO projects (owner, name, repository, provider, visibility)"
-                " VALUES (?, ?, ?, ?, ?) RETURNING id",
-                (owner.runtime_id, name, source.url, source.provider, visibility),
+                "INSERT INTO projects (owner, name, repository, provider, visibility,"
+                " permission_mode) VALUES (?, ?, ?, ?, ?, ?) RETURNING id",
+                (owner.runtime_id, name, source.url, source.provider, visibility, permission_mode),
             ).fetchone()
         try:
             self._runtime.start_clone(owner.runtime_id, project, source.url)
@@ -168,7 +199,15 @@ class Projects:
             self._forget(project)
             raise
         self._follow(project, owner=owner.runtime_id, name=name, repository=source.url)
-        return Project(project, name, source.url, source.provider, visibility, Status.CLONING)
+        return Project(
+            project,
+            name,
+            source.url,
+            source.provider,
+            visibility,
+            permission_mode,
+            Status.CLONING,
+        )
 
     def list(self, owner: User) -> list[Project]:
         with self._db.transaction() as conn:
@@ -179,12 +218,41 @@ class Projects:
         return [self._project(row) for row in rows]
 
     def get(self, owner: User, project: str) -> Project | None:
-        with self._db.transaction() as conn:
-            row = conn.execute(
-                f"SELECT {_COLUMNS} FROM projects WHERE owner = ? AND id = ?",
-                (owner.runtime_id, project),
-            ).fetchone()
+        row = self._row(owner, project)
         return self._project(row) if row else None
+
+    def start(self, owner: User, project: str) -> Project | None:
+        """Start the Project's Remote Control Server, restarting it if it runs, or have it wait
+        for its owner's Claude Account. None if not found.
+
+        Raises ProjectRefused, RuntimeUnavailable.
+        """
+        row = self._row(owner, project)
+        if row is None:
+            return None
+        if self._runtime.project_status(project) == ProjectStatus.CLONING:
+            raise ProjectRefused(Refusal.CLONING)
+        self._start(row)
+        return self.get(owner, project)
+
+    def stop(self, owner: User, project: str) -> Project | None:
+        """Stop the Project's Remote Control Server, or its wait. None if not found.
+
+        Raises RuntimeUnavailable.
+        """
+        if self._row(owner, project) is None:
+            return None
+        self._should_run(project, False)
+        self._runtime.stop_project(project)
+        return self.get(owner, project)
+
+    def follow_sign_in(self, owner: User) -> None:
+        """Once the owner's sign-in ends, start their Projects waiting for their Claude Account."""
+        self._follow_sign_in_in_background(owner.runtime_id)
+
+    def close(self) -> None:
+        """Dockyard is stopping: stop following sign-ins."""
+        self._closed.set()
 
     def clone(self, owner: User, project: str) -> CloneReport | None:
         """How the Project's clone went, if it was cloned since Dockyard started."""
@@ -209,15 +277,65 @@ class Projects:
                 self._deleting.discard(project)
         return True
 
-    def resume_clones(self) -> None:
-        """Follow again the clones that were in progress when Dockyard stopped."""
+    def resume(self) -> None:
+        """Pick up what was in progress when Dockyard stopped: clones, and Projects waiting for
+        a Claude Account (connected meanwhile, or with a sign-in in progress)."""
         with self._db.transaction() as conn:
             rows = conn.execute("SELECT id, owner, name, repository FROM projects").fetchall()
+            waiting = conn.execute(
+                "SELECT DISTINCT owner FROM projects WHERE should_run = 1"
+            ).fetchall()
         for row in rows:
             if self._runtime.project_status(row["id"]) == ProjectStatus.CLONING:
                 self._follow(
                     row["id"], owner=row["owner"], name=row["name"], repository=row["repository"]
                 )
+        for (owner,) in waiting:
+            if self._runtime.login_environment_running(owner):
+                self._follow_sign_in_in_background(owner)
+            else:
+                self._start_waiting(owner)
+
+    def _start(self, row: sqlite3.Row) -> None:
+        """Start its Remote Control Server, or have it wait for its owner's Claude Account."""
+        if self._runtime.claude_account_connected(row["owner"]):
+            with suppress(ProjectMissing):  # its status says so
+                self._runtime.start_project(
+                    row["owner"],
+                    row["id"],
+                    name=row["name"],
+                    permission_mode=row["permission_mode"],
+                )
+        self._should_run(row["id"], True)
+
+    def _start_waiting(self, owner: str) -> None:
+        """Start the owner's Projects that wait for their Claude Account, if it is connected."""
+        with self._db.transaction() as conn:
+            rows = conn.execute(
+                f"SELECT {_COLUMNS}, owner FROM projects WHERE owner = ? AND should_run = 1",
+                (owner,),
+            ).fetchall()
+        stopped = ProjectStatus.STOPPED
+        waiting = [row for row in rows if self._runtime.project_status(row["id"]) == stopped]
+        if waiting and self._runtime.claude_account_connected(owner):
+            for row in waiting:
+                self._start(row)
+
+    def _follow_sign_in_in_background(self, owner: str) -> None:
+        threading.Thread(
+            target=self._follow_sign_in, args=(owner,), name=f"sign-in-{owner}", daemon=True
+        ).start()
+
+    def _follow_sign_in(self, owner: str) -> None:
+        """Until the sign-in ends, then start the Projects waiting for it: retried until Docker
+        answers, or the waiting Projects would wait for an account already connected."""
+        while not self._closed.wait(self._poll_interval):
+            try:
+                if not self._runtime.login_environment_running(owner):
+                    self._start_waiting(owner)
+                    return
+            except RuntimeUnavailable as error:
+                log.warning("Cannot follow the sign-in of %s: %s", owner, error)
 
     def _follow(self, project: str, *, owner: str, name: str, repository: str) -> None:
         with self._lock:
@@ -247,6 +365,9 @@ class Projects:
     def _conclude(self, project: str, clone: Clone) -> None:
         """Deal with how the clone ended, then report it: a failed one means its Project is gone."""
         if clone.state == CloneState.SUCCEEDED:
+            # Started while its clone is still there: it goes from cloning to running at once.
+            if row := self._row_by_id(project):
+                self._start(row)
             self._runtime.finish_clone(project)
         else:
             self._remove_failed(project)
@@ -270,22 +391,47 @@ class Projects:
                     self._clones[project], state=clone.state, output=_readable(clone.output)
                 )
 
+    def _row(self, owner: User, project: str) -> sqlite3.Row | None:
+        with self._db.transaction() as conn:
+            row: sqlite3.Row | None = conn.execute(
+                f"SELECT {_COLUMNS}, owner FROM projects WHERE owner = ? AND id = ?",
+                (owner.runtime_id, project),
+            ).fetchone()
+        return row
+
+    def _row_by_id(self, project: str) -> sqlite3.Row | None:
+        with self._db.transaction() as conn:
+            row: sqlite3.Row | None = conn.execute(
+                f"SELECT {_COLUMNS}, owner FROM projects WHERE id = ?", (project,)
+            ).fetchone()
+        return row
+
+    def _should_run(self, project: str, should_run: bool) -> None:
+        with self._db.transaction() as conn:
+            conn.execute("UPDATE projects SET should_run = ? WHERE id = ?", (should_run, project))
+
     def _forget(self, project: str) -> None:
         with self._db.transaction() as conn:
             conn.execute("DELETE FROM projects WHERE id = ?", (project,))
 
     def _project(self, row: sqlite3.Row) -> Project:
+        found = self._runtime.project_status(row["id"])
+        if found == ProjectStatus.STOPPED:
+            status = Status.WAITING if row["should_run"] else Status.STOPPED
+        else:
+            status = _STATUS[found]
         return Project(
             id=row["id"],
             name=row["name"],
             repository=row["repository"],
             provider=Provider(row["provider"]),
             visibility=Visibility(row["visibility"]),
-            status=_STATUS[self._runtime.project_status(row["id"])],
+            permission_mode=PermissionMode(row["permission_mode"]),
+            status=status,
         )
 
 
-_COLUMNS = "id, name, repository, provider, visibility"
+_COLUMNS = "id, name, repository, provider, visibility, permission_mode, should_run"
 
 
 def _readable(output: str) -> str:

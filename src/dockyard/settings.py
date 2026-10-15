@@ -2,12 +2,15 @@
 
 from __future__ import annotations
 
+import ipaddress
 import re
 from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
 
 from cryptography.fernet import Fernet
+
+from .runtime import DEFAULT_DNS
 
 TRUE = ("1", "true", "yes", "on")
 FALSE = ("", "0", "false", "no", "off")
@@ -55,6 +58,7 @@ class Settings:
     listen_host: str
     listen_port: int
     base_image: str
+    projects_dns: tuple[str, ...]
 
     @classmethod
     def from_env(cls, env: Mapping[str, str]) -> Settings:
@@ -111,6 +115,14 @@ class Settings:
         if not (listen_port.isdigit() and 1 <= int(listen_port) <= 65535):
             problems.append(f"DOCKYARD_LISTEN_PORT must be a port number, not {listen_port!r}.")
 
+        dns = env.get("DOCKYARD_PROJECTS_DNS", "").strip()
+        projects_dns = tuple(server.strip() for server in dns.split(",")) if dns else DEFAULT_DNS
+        if not all(_is_ip_address(server) for server in projects_dns):
+            problems.append(
+                "DOCKYARD_PROJECTS_DNS must be IP addresses separated by commas, "
+                f"e.g. 1.1.1.1,9.9.9.9, not {dns!r}."
+            )
+
         if problems:
             raise ConfigError(problems)
         return cls(
@@ -121,7 +133,16 @@ class Settings:
             listen_host=env.get("DOCKYARD_LISTEN_HOST", "").strip() or "127.0.0.1",
             listen_port=int(listen_port),
             base_image=env.get("DOCKYARD_BASE_IMAGE", "").strip() or DEFAULT_BASE_IMAGE,
+            projects_dns=projects_dns,
         )
+
+
+def _is_ip_address(text: str) -> bool:
+    try:
+        ipaddress.ip_address(text)
+    except ValueError:
+        return False
+    return True
 
 
 def _is_fernet_key(key: str) -> bool:

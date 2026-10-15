@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import logging
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 from typing import Annotated
 
 from fastapi import FastAPI, Form, Request
@@ -38,12 +40,19 @@ def create_app(
     accounts.bootstrap_first_administrator(settings.first_administrator_email)
     projects = Projects(database, runtime)
     try:
-        projects.resume_clones()
+        projects.resume()
     except RuntimeUnavailable as error:
-        log.warning("Cannot follow the clones in progress: %s", error)
+        log.warning("Cannot pick up the clones and Projects in progress: %s", error)
     pages = Pages()
 
-    app = FastAPI(title="Dockyard", docs_url=None, redoc_url=None, openapi_url=None)
+    @asynccontextmanager
+    async def lifespan(app: FastAPI) -> AsyncIterator[None]:
+        yield
+        projects.close()
+
+    app = FastAPI(
+        title="Dockyard", docs_url=None, redoc_url=None, openapi_url=None, lifespan=lifespan
+    )
     app.add_middleware(
         IdentityGuard,
         identity=identity_for(settings.identity, signing_keys),
@@ -85,7 +94,7 @@ def create_app(
     def me(user: CurrentUser) -> dict[str, str]:
         return {"email": user.email, "role": user.role}
 
-    app.include_router(claude_account_routes(runtime, pages))
+    app.include_router(claude_account_routes(runtime, projects, pages))
     app.include_router(projects_routes(projects, pages))
     app.mount("/static", StaticFiles(packages=[("dockyard.web", "static")]), name="static")
     return app

@@ -41,10 +41,10 @@ def test_a_user_creates_a_project_follows_its_clone_and_finds_it_on_the_dashboar
         expect(page.get_by_test_id("project-status")).to_have_text("Cloning")
         expect(page.get_by_role("log", name="Clone progress")).to_contain_text("Cloning into")
 
-    expect(page.get_by_test_id("project-status")).to_have_text("Stopped")
+    expect(page.get_by_test_id("project-status")).to_have_text("Waiting for Claude Account")
     page.get_by_role("link", name="Back to the dashboard").click()
     project = page.get_by_role("listitem").filter(has_text="Hello World")
-    expect(project.get_by_test_id("project-status")).to_have_text("Stopped")
+    expect(project.get_by_test_id("project-status")).to_have_text("Waiting for Claude Account")
     expect(project).to_contain_text(PUBLIC_REPOSITORY)
 
 
@@ -79,7 +79,7 @@ def test_a_user_deletes_a_project_choosing_whether_to_delete_its_code(
 ) -> None:
     page = open_as(ADMINISTRATOR)
     fill_in_new_project(page, PUBLIC_REPOSITORY, "Short-lived")
-    expect(page.get_by_test_id("project-status")).to_have_text("Stopped")
+    expect(page.get_by_test_id("project-status")).to_have_text("Waiting for Claude Account")
     project = page.url.rsplit("/", 1)[-1]
 
     if delete_code:

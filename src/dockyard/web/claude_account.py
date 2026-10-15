@@ -12,6 +12,7 @@ from pydantic import BaseModel
 from starlette.responses import Response
 
 from ..accounts import User
+from ..projects import Projects
 from ..runtime import LoginNotRunning, Runtime, RuntimeUnavailable
 from .guard import CurrentUser, websocket_close_code
 from .pages import Pages
@@ -32,12 +33,16 @@ def claude_account_status(runtime: Runtime, user: User) -> ClaudeAccountStatus:
     )
 
 
-def claude_account_routes(runtime: Runtime, pages: Pages) -> APIRouter:
+def claude_account_routes(runtime: Runtime, projects: Projects, pages: Pages) -> APIRouter:
     router = APIRouter()
+
+    def start_login(user: User) -> None:
+        runtime.start_login_environment(user.runtime_id)
+        projects.follow_sign_in(user)  # Projects waiting for the Claude Account start after it
 
     @router.post("/claude-account/login")
     def connect(user: CurrentUser) -> RedirectResponse:
-        runtime.start_login_environment(user.runtime_id)
+        start_login(user)
         return RedirectResponse("/claude-account/login", status_code=303)
 
     @router.get("/claude-account/login", response_class=HTMLResponse, response_model=None)
@@ -56,8 +61,8 @@ def claude_account_routes(runtime: Runtime, pages: Pages) -> APIRouter:
         return claude_account_status(runtime, user)
 
     @router.post("/api/claude-account/login", status_code=202)
-    def start_login(user: CurrentUser) -> ClaudeAccountStatus:
-        runtime.start_login_environment(user.runtime_id)
+    def start_login_api(user: CurrentUser) -> ClaudeAccountStatus:
+        start_login(user)
         return claude_account_status(runtime, user)
 
     @router.delete("/api/claude-account/login", status_code=204)

@@ -32,6 +32,7 @@ services:
       DOCKYARD_CF_ACCESS_TEAM: ${DOCKYARD_CF_ACCESS_TEAM:-}
       DOCKYARD_CF_ACCESS_AUD: ${DOCKYARD_CF_ACCESS_AUD:-}
       DOCKYARD_BASE_IMAGE: ${DOCKYARD_BASE_IMAGE:-dockyard-base:latest}
+      DOCKYARD_PROJECTS_DNS: ${DOCKYARD_PROJECTS_DNS:-}
     volumes:
       - dockyard-data:/data
     ports:

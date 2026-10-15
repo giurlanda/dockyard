@@ -9,6 +9,10 @@
     </div>
     <p>{{ t("project.repository") }}:
       <a href="{{ project.repository }}" target="_blank" rel="noopener noreferrer">{{ project.repository }}</a></p>
+    <p>{{ t("project.permission_mode") }}: {{ t("permission_mode." ~ project.permission_mode) }}</p>
+    {% if project.permission_mode == "bypassPermissions" %}
+      <p class="warning">{{ t("permission_mode.bypass_warning") }}</p>
+    {% endif %}
     {% if project.status == "cloning" %}
       <p>{{ t("project.cloning") }}</p>
       <pre class="output" role="log" aria-label="{{ t('project.clone_output') }}"
@@ -18,6 +22,30 @@
     {% endif %}
     <p><a href="/">{{ t("notice.home") }}</a></p>
   </section>
+  {% if project.status != "cloning" %}
+    <section class="panel" aria-labelledby="server">
+      <h2 id="server">{{ t("project.server") }}</h2>
+      {% if project.status == "running" %}
+        <p>{{ t("project.running", name=project.name) }}</p>
+      {% elif project.status == "waiting" %}
+        <p class="warning" data-waiting="/api/projects/{{ project.id }}">{{ t("project.waiting") }}
+          <a href="/">{{ t("project.connect") }}</a></p>
+      {% elif project.status == "stopped" %}
+        <p class="muted">{{ t("project.stopped") }}</p>
+      {% endif %}
+      <p class="muted">{{ t("project.sessions") }}</p>
+      <div class="actions">
+        {% if project.status in ("running", "error") %}
+          <form method="post" action="/projects/{{ project.id }}/restart"><button class="primary">{{ t("project.restart") }}</button></form>
+        {% elif project.status in ("stopped", "waiting") %}
+          <form method="post" action="/projects/{{ project.id }}/start"><button class="primary">{{ t("project.start") }}</button></form>
+        {% endif %}
+        {% if project.status != "stopped" %}
+          <form method="post" action="/projects/{{ project.id }}/stop"><button>{{ t("project.stop") }}</button></form>
+        {% endif %}
+      </div>
+    </section>
+  {% endif %}
   <section class="panel" aria-labelledby="delete">
     <h2 id="delete">{{ t("project.delete.heading") }}</h2>
     <p class="muted">{{ t("project.delete.explain") }}</p>

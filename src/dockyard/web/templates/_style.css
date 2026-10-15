@@ -98,3 +98,8 @@ button.danger { border-color: var(--bad); color: var(--bad); }
   background: #000; color: #e6e6e6; font-size: 12px; white-space: pre-wrap; overflow-wrap: anywhere;
 }
 .failed { color: var(--bad); }
+.badge.warn { border-color: var(--warn-line); background: var(--warn-bg); color: var(--ink); }
+.modes .hint { margin: 0 0 8px 24px; }
+.modes > .hint:first-of-type { margin-left: 0; }
+.bypass-warning { display: none; margin: 8px 0 0; }
+.modes:has(input[value="bypassPermissions"]:checked) .bypass-warning { display: block; }

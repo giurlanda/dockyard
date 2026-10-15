@@ -9,7 +9,7 @@ from httpx2 import Response
 from dockyard.runtime import ProjectStatus
 from dockyard.runtime.fake import FakeRuntime
 
-from .conftest import ADMINISTRATOR, AccessProxy, wait_until
+from .conftest import ADMINISTRATOR, AccessProxy, connect_claude_account, wait_until
 
 REPOSITORY = "https://github.com/octocat/Hello-World"
 MISSING_REPOSITORY = "https://github.com/octocat/no-such-repository"
@@ -64,7 +64,9 @@ def test_creating_a_project_opens_its_page_and_the_dashboard_lists_it_with_its_s
         assert "Cloning" in dashboard
         assert "You have no Projects yet." not in dashboard
 
-    assert wait_until(lambda: "Stopped" in dockyard.get("/", headers=signed_in).text)
+    assert wait_until(
+        lambda: "Waiting for Claude Account" in dockyard.get("/", headers=signed_in).text
+    )
 
 
 def test_a_refused_address_is_explained_on_the_form_which_keeps_what_was_typed(
@@ -152,3 +154,93 @@ def test_the_project_pages_speak_italian(dockyard: TestClient, proxy: AccessProx
     assert "Indirizzo del repository" in form.text
     assert "Sono supportati solo repository su github.com e gitlab.com." in refused.text
     assert "Elimina il Progetto" in page.text
+
+
+def test_the_new_project_form_offers_the_permission_modes_and_warns_about_bypassing_them(
+    dockyard: TestClient, proxy: AccessProxy
+) -> None:
+    form = dockyard.get("/projects/new", headers=proxy.headers(ADMINISTRATOR)).text
+
+    for mode in ("default", "acceptEdits", "auto", "bypassPermissions"):
+        assert f'name="permission_mode" value="{mode}"' in form
+    assert 'value="default" checked' in form
+    assert "Only for repositories you fully trust" in form
+
+
+def test_the_chosen_permission_mode_is_shown_on_the_project_page(
+    dockyard: TestClient, proxy: AccessProxy
+) -> None:
+    signed_in = proxy.headers(ADMINISTRATOR)
+
+    page = dockyard.post(
+        "/projects",
+        data={
+            "name": "Hello",
+            "repository": REPOSITORY,
+            "visibility": "public",
+            "permission_mode": "bypassPermissions",
+        },
+        headers=signed_in,
+    )
+
+    assert "Bypass permissions" in page.text
+    assert "Only for repositories you fully trust" in page.text
+
+
+def test_a_waiting_project_page_explains_it_starts_once_the_claude_account_is_connected(
+    dockyard: TestClient, proxy: AccessProxy
+) -> None:
+    signed_in = proxy.headers(ADMINISTRATOR)
+    path = submit(dockyard, signed_in).url.path
+
+    assert wait_until(
+        lambda: "Waiting for Claude Account" in dockyard.get(path, headers=signed_in).text
+    )
+    page = dockyard.get(path, headers=signed_in).text
+    assert "starts by itself as soon as your Claude Account is connected" in page
+    assert "The first Session works directly in the main checkout" in page
+    assert "its own git worktree" in page
+    assert f'action="{path}/start"' in page  # it may start now, if the account is connected
+
+
+def test_a_user_stops_starts_and_restarts_a_project_from_its_page(
+    dockyard: TestClient, proxy: AccessProxy, runtime: FakeRuntime
+) -> None:
+    signed_in = proxy.headers(ADMINISTRATOR)
+    connect_claude_account(dockyard, signed_in)
+    path = submit(dockyard, signed_in, name="Hello World").url.path
+    assert wait_until(lambda: "Running" in dockyard.get(path, headers=signed_in).text)
+    page = dockyard.get(path, headers=signed_in).text
+    assert "this Project appears there as “Hello World”" in page
+
+    stopped = dockyard.post(f"{path}/stop", headers=signed_in)
+    assert stopped.url.path == path
+    assert "The Remote Control Server is stopped" in stopped.text
+    started = dockyard.post(f"{path}/start", headers=signed_in)
+    assert "this Project appears there as “Hello World”" in started.text
+    restarted = dockyard.post(f"{path}/restart", headers=signed_in)
+    assert "Running" in restarted.text
+    assert "starts: 3" in runtime.project_log(path.rsplit("/", 1)[-1])
+
+
+def test_another_user_cannot_start_or_stop_a_project_from_its_page(
+    dockyard: TestClient, proxy: AccessProxy, add_user: Callable[[str], None]
+) -> None:
+    add_user("another.user@example.com")
+    path = submit(dockyard, proxy.headers(ADMINISTRATOR)).url.path
+    other = proxy.headers("another.user@example.com")
+
+    for action in ("start", "stop", "restart"):
+        assert dockyard.post(f"{path}/{action}", headers=other).status_code == 404
+
+
+def test_the_running_project_page_speaks_italian(dockyard: TestClient, proxy: AccessProxy) -> None:
+    signed_in = {**proxy.headers(ADMINISTRATOR), "Accept-Language": "it"}
+    connect_claude_account(dockyard, signed_in)
+    path = submit(dockyard, signed_in).url.path
+
+    assert wait_until(lambda: "In esecuzione" in dockyard.get(path, headers=signed_in).text)
+    page = dockyard.get(path, headers=signed_in).text
+    assert "La prima Sessione lavora direttamente nella copia principale" in page
+    assert "Riavvia" in page
+    assert "Ferma" in page
