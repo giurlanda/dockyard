@@ -6,6 +6,8 @@ import http.client
 import os
 import secrets
 import socket
+import threading
+import time
 from collections.abc import Iterator, Sequence
 from contextlib import contextmanager, suppress
 from typing import Any
@@ -63,6 +65,14 @@ TRUSTED_SCRIPT = """
 jq -e --arg p "$1" '.projects[$p].hasTrustDialogAccepted == true' \\
     "$CLAUDE_CONFIG_DIR/.claude.json" >/dev/null
 """
+# A Terminal: a login shell in the Project's path $1, never set as the working directory (see
+# WORKSPACE), named $2 so that it can be hung up.
+TERMINAL_SCRIPT = 'cd -- "$1" && exec -a "$2" bash -l'
+# Hangs up the Terminal named $1: its shell leads a session of its own, and what it runs is in it.
+# Docker leaves the shell running when the connection to it closes.
+HANG_UP_SCRIPT = 'for shell in $(pgrep -f -x -- "$1 -l"); do pkill -HUP -s "$shell"; done'
+HANG_UP_ATTEMPTS = 20
+HANG_UP_INTERVAL = 0.25  # seconds
 # How far back a Project's log is searched for a trust prompt still waiting: nothing is printed
 # while it waits.
 TRUST_PROMPT_LOG_LINES = 50
@@ -303,6 +313,23 @@ class DockerRuntime:
             except (NotFound, APIError) as error:  # it stopped or restarts meanwhile
                 raise ProjectNotRunning(project) from error
 
+    def open_terminal(self, project: str) -> Terminal:
+        with self._docker():
+            environment = str(self._running_environment(project).id)
+            name = f"dockyard-terminal-{secrets.token_hex(6)}"
+            try:
+                shell = self._client.api.exec_create(
+                    environment,
+                    ["bash", "-c", TERMINAL_SCRIPT, "dockyard", project_path(project), name],
+                    stdin=True,
+                    tty=True,
+                    user=f"{UID}:{UID}",
+                    environment={"TERM": "xterm-256color"},
+                )
+                return Terminal(self._client.api, environment, str(shell["Id"]), name)
+            except (NotFound, APIError) as error:  # it stopped or restarts meanwhile
+                raise ProjectNotRunning(project) from error
+
     def project_stats(self, project: str) -> Stats | None:
         with self._docker():
             try:
@@ -499,24 +526,13 @@ class DockerRuntime:
             raise RuntimeUnavailable(f"Docker failed: {error}") from error
 
 
-class AttachedTty:
-    """The TTY of a running container's main process, through Docker's attach.
+class _HijackedTty:
+    """A TTY reached through a connection Docker hijacked, starting with `replay`."""
 
-    It starts with everything the program printed, or with `replay` instead.
-    """
-
-    def __init__(
-        self, api: docker.APIClient, container: str, *, replay: bytes | None = None
-    ) -> None:
-        self._api = api
-        self._container = container
-        logs = 1 if replay is None else 0
-        stream = api.attach_socket(
-            container, params={"stdin": 1, "stdout": 1, "stderr": 1, "stream": 1, "logs": logs}
-        )
+    def __init__(self, stream: Any, *, replay: bytes = b"") -> None:
         self._response = stream._response
         self._socket: socket.socket = stream._sock
-        self._unread = (replay or b"") + _read_ahead(self._response, self._socket)
+        self._unread = replay + _read_ahead(self._response, self._socket)
         self._socket.settimeout(None)  # docker-py leaves the client's request timeout on it
 
     def read(self) -> bytes:
@@ -532,15 +548,67 @@ class AttachedTty:
         with suppress(OSError):  # the program has ended: read() says so
             self._socket.sendall(data)
 
-    def resize(self, rows: int, cols: int) -> None:
-        with suppress(DockerException, requests.RequestException):  # it ended: read() says so
-            self._api.resize(self._container, height=rows, width=cols)
-
     def close(self) -> None:
         with suppress(OSError):  # wakes up a read() waiting in another thread
             self._socket.shutdown(socket.SHUT_RDWR)
         self._socket.close()
         self._response.close()
+
+
+class AttachedTty(_HijackedTty):
+    """The TTY of a running container's main process, through Docker's attach.
+
+    It starts with everything the program printed, or with `replay` instead.
+    """
+
+    def __init__(
+        self, api: docker.APIClient, container: str, *, replay: bytes | None = None
+    ) -> None:
+        self._api = api
+        self._container = container
+        logs = 1 if replay is None else 0
+        stream = api.attach_socket(
+            container, params={"stdin": 1, "stdout": 1, "stderr": 1, "stream": 1, "logs": logs}
+        )
+        super().__init__(stream, replay=replay or b"")
+
+    def resize(self, rows: int, cols: int) -> None:
+        with suppress(DockerException, requests.RequestException):  # it ended: read() says so
+            self._api.resize(self._container, height=rows, width=cols)
+
+
+class Terminal(_HijackedTty):
+    """A Terminal's shell, created with Docker's exec as `name`, started here."""
+
+    def __init__(self, api: docker.APIClient, container: str, shell: str, name: str) -> None:
+        self._api = api
+        self._container = container
+        self._shell = shell
+        self._name = name
+        super().__init__(api.exec_start(shell, tty=True, socket=True))
+
+    def resize(self, rows: int, cols: int) -> None:
+        with suppress(DockerException, requests.RequestException):  # it ended: read() says so
+            self._api.exec_resize(self._shell, height=rows, width=cols)
+
+    def close(self) -> None:
+        """Lets go of the shell at once, and hangs it up meanwhile."""
+        super().close()
+        threading.Thread(target=self._hang_up, name=self._name, daemon=True).start()
+
+    def _hang_up(self) -> None:
+        """Until its shell has ended: one closed right after it opened may not bear its name yet."""
+        with suppress(DockerException, requests.RequestException):  # its environment is gone
+            for _ in range(HANG_UP_ATTEMPTS):
+                if not self._api.exec_inspect(self._shell)["Running"]:
+                    return
+                hang_up = self._api.exec_create(
+                    self._container,
+                    ["bash", "-c", HANG_UP_SCRIPT, "hang-up", self._name],
+                    user=f"{UID}:{UID}",
+                )
+                self._api.exec_start(hang_up["Id"])
+                time.sleep(HANG_UP_INTERVAL)
 
 
 class FollowedLog:

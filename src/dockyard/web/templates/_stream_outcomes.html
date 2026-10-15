@@ -1,4 +1,6 @@
-<p class="outcome bad" data-outcome="ended" hidden>{{ t("stream.ended") }}</p>
+{# Why a terminal closed. The page may `set` the keys of its own messages for when what it shows
+   ended (ended) or the connection was lost (lost); the Remote Control Server's by default. #}
+<p class="outcome bad" data-outcome="ended" hidden>{{ t(ended | default("stream.ended")) }}</p>
 <p class="outcome bad" data-outcome="not-running" hidden>{{ t("stream.not_running") }}</p>
 <p class="outcome bad" data-outcome="unavailable" hidden>{{ t("runtime_unavailable.body") }}</p>
-<p class="outcome bad" data-outcome="lost" hidden>{{ t("stream.lost") }}</p>
+<p class="outcome bad" data-outcome="lost" hidden>{{ t(lost | default("stream.lost")) }}</p>

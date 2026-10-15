@@ -3,6 +3,8 @@
 //   <div data-terminal="/ws/...">              the terminal, bridged to that socket
 //   <div data-terminal="/ws/..." data-terminal-readonly>  only shows what the socket sends
 //   <form data-terminal-send><input>...</form>  sends the input's value, then Enter
+//   <button data-terminal-key="escape">          sends a key a phone keyboard lacks: escape, tab,
+//                                                ctrl-c, up, down
 //
 // When the socket closes, the terminal element dispatches "terminal-closed" (detail: {code}).
 // Leaving the page closes the socket: Dockyard stops following what it showed.
@@ -45,6 +47,24 @@
   if (!readonly) terminal.onData((data) => send({ type: "input", data }));
   new ResizeObserver(resize).observe(element);
   addEventListener("pagehide", () => socket.close());
+
+  // Arrows as the program in the terminal asked for them: full-screen programs want the
+  // "application" ones.
+  const arrow = (code) => (terminal.modes.applicationCursorKeysMode ? "\x1bO" : "\x1b[") + code;
+  const keys = {
+    escape: () => "\x1b",
+    tab: () => "\t",
+    "ctrl-c": () => "\x03",
+    up: () => arrow("A"),
+    down: () => arrow("B"),
+  };
+  for (const button of document.querySelectorAll("[data-terminal-key]")) {
+    // Keeps the focus where it is: on a phone, the keyboard stays open.
+    button.addEventListener("mousedown", (event) => event.preventDefault());
+    button.addEventListener("click", () => {
+      send({ type: "input", data: keys[button.dataset.terminalKey]() });
+    });
+  }
 
   for (const form of document.querySelectorAll("[data-terminal-send]")) {
     form.addEventListener("submit", (event) => {

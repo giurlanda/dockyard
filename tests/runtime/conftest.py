@@ -252,3 +252,32 @@ def lose_trust(request: pytest.FixtureRequest) -> LoseTrust:
             assert exit_code == 0, output
 
     return lose
+
+
+TerminalProcesses = Callable[[Runtime, str], int]
+
+
+@pytest.fixture
+def terminal_processes(request: pytest.FixtureRequest) -> TerminalProcesses:
+    """How many processes the Project's Terminals run: their shells, and the `sleep 600` typed in
+    them."""
+    if request.node.callspec.params["make_runtime"] == "fake":
+
+        def count_in_fake(runtime: Runtime, project: str) -> int:
+            assert isinstance(runtime, FakeRuntime)
+            return runtime.terminal_processes(project)
+
+        return count_in_fake
+    daemon: docker.DockerClient = request.getfixturevalue("docker_daemon")
+
+    def count(runtime: Runtime, project: str) -> int:
+        labels = [f"dockyard.project={project}", "dockyard.kind=project"]
+        (environment,) = daemon.containers.list(filters={"label": labels})
+        processes = 0
+        for pattern in (["-x", "bash"], ["-f", "-x", "sleep 600"]):
+            result = environment.exec_run(["pgrep", "-c", *pattern])
+            assert isinstance(result.output, bytes)
+            processes += int(result.output)
+        return processes
+
+    return count

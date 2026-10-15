@@ -254,7 +254,7 @@ def running_project_page(dockyard: TestClient, headers: dict[str, str]) -> str:
     return path
 
 
-def test_a_running_project_page_shows_its_usage_and_leads_to_its_log_and_console(
+def test_a_running_project_page_shows_its_usage_and_leads_to_its_log_console_and_terminal(
     dockyard: TestClient, proxy: AccessProxy
 ) -> None:
     signed_in = proxy.headers(ADMINISTRATOR)
@@ -268,9 +268,10 @@ def test_a_running_project_page_shows_its_usage_and_leads_to_its_log_and_console
     assert f'data-stats="/api/projects/{project}/stats"' in page
     assert f'href="{path}/logs"' in page
     assert f'href="{path}/console"' in page
+    assert f'href="{path}/terminal"' in page
 
 
-def test_a_stopped_project_page_offers_neither_usage_nor_log_nor_console(
+def test_a_stopped_project_page_offers_neither_usage_nor_log_nor_console_nor_terminal(
     dockyard: TestClient, proxy: AccessProxy
 ) -> None:
     signed_in = proxy.headers(ADMINISTRATOR)
@@ -281,6 +282,7 @@ def test_a_stopped_project_page_offers_neither_usage_nor_log_nor_console(
     assert "data-stats" not in page
     assert f'href="{path}/logs"' not in page
     assert f'href="{path}/console"' not in page
+    assert f'href="{path}/terminal"' not in page
 
 
 def test_the_log_page_follows_the_log_read_only(dockyard: TestClient, proxy: AccessProxy) -> None:
@@ -344,3 +346,56 @@ def test_the_log_console_and_trust_prompt_speak_italian(
     assert "Apri la console" in page
     assert "ferma il Server Remote Control" in console
     assert "Torna al Progetto" in log
+
+
+def test_the_terminal_page_opens_a_shell_with_the_keys_a_phone_lacks(
+    dockyard: TestClient, proxy: AccessProxy
+) -> None:
+    signed_in = proxy.headers(ADMINISTRATOR)
+    path = running_project_page(dockyard, signed_in)
+    project = path.rsplit("/", 1)[-1]
+
+    page = dockyard.get(f"{path}/terminal", headers=signed_in)
+
+    assert page.status_code == 200
+    assert f'data-terminal="/ws/projects/{project}/terminal"' in page.text
+    assert "data-terminal-readonly" not in page.text
+    assert "non-root user" in page.text
+    assert "claude --remote-control" in page.text
+    for key in ("escape", "tab", "ctrl-c", "up", "down"):
+        assert f'data-terminal-key="{key}"' in page.text
+    assert "data-terminal-send" in page.text
+    assert f'href="{path}"' in page.text
+
+
+def test_the_terminal_of_a_stopped_project_says_to_start_it_first(
+    dockyard: TestClient, proxy: AccessProxy
+) -> None:
+    signed_in = proxy.headers(ADMINISTRATOR)
+    path = running_project_page(dockyard, signed_in)
+    dockyard.post(f"{path}/stop", headers=signed_in)
+
+    page = dockyard.get(f"{path}/terminal", headers=signed_in)
+
+    assert page.status_code == 200
+    assert "This Project is not running: start it from its page." in page.text
+    assert "data-terminal=" not in page.text
+    assert f'action="{path}/start"' in page.text
+
+
+def test_the_terminal_speaks_italian(dockyard: TestClient, proxy: AccessProxy) -> None:
+    signed_in = {**proxy.headers(ADMINISTRATOR), "Accept-Language": "it"}
+    connect_claude_account(dockyard, signed_in)
+    path = submit(dockyard, signed_in).url.path
+    assert wait_until(lambda: "In esecuzione" in dockyard.get(path, headers=signed_in).text)
+
+    page = dockyard.get(path, headers=signed_in).text
+    terminal = dockyard.get(f"{path}/terminal", headers=signed_in).text
+    dockyard.post(f"{path}/stop", headers=signed_in)
+    stopped = dockyard.get(f"{path}/terminal", headers=signed_in).text
+
+    assert ">Terminale<" in page
+    assert "utente non root" in terminal
+    assert "Comando" in terminal
+    assert "Torna al Progetto" in terminal
+    assert "Questo Progetto non è in esecuzione" in stopped

@@ -7,6 +7,7 @@ import re
 import sqlite3
 import threading
 import time
+from collections.abc import Callable
 from contextlib import suppress
 from dataclasses import dataclass, replace
 from enum import StrEnum
@@ -260,24 +261,21 @@ class Projects:
 
         Raises ProjectRefused, RuntimeUnavailable.
         """
-        if self._row(owner, project) is None:
-            return None
-        try:
-            return self._runtime.follow_project_log(project)
-        except ProjectNotRunning as error:
-            raise ProjectRefused(Refusal.NOT_RUNNING) from error
+        return self._while_running(owner, project, self._runtime.follow_project_log)
 
     def attach_console(self, owner: User, project: str) -> Tty | None:
         """The console: the Project's Remote Control Server's own TTY. None if not found.
 
         Raises ProjectRefused, RuntimeUnavailable.
         """
-        if self._row(owner, project) is None:
-            return None
-        try:
-            return self._runtime.attach_project(project)
-        except ProjectNotRunning as error:
-            raise ProjectRefused(Refusal.NOT_RUNNING) from error
+        return self._while_running(owner, project, self._runtime.attach_project)
+
+    def open_terminal(self, owner: User, project: str) -> Tty | None:
+        """A Terminal: a new shell of the non-root user in the Project. None if not found.
+
+        Raises ProjectRefused, RuntimeUnavailable.
+        """
+        return self._while_running(owner, project, self._runtime.open_terminal)
 
     def stats(self, owner: User, project: str) -> Stats | None:
         """The CPU and RAM the Project uses now. None if not found.
@@ -340,6 +338,20 @@ class Projects:
                 self._follow_sign_in_in_background(owner)
             else:
                 self._start_waiting(owner)
+
+    def _while_running[T: Output](
+        self, owner: User, project: str, opening: Callable[[str], T]
+    ) -> T | None:
+        """What `opening` opens on the owner's running Project. None if not found.
+
+        Raises ProjectRefused, RuntimeUnavailable.
+        """
+        if self._row(owner, project) is None:
+            return None
+        try:
+            return opening(project)
+        except ProjectNotRunning as error:
+            raise ProjectRefused(Refusal.NOT_RUNNING) from error
 
     def _start(self, row: sqlite3.Row) -> None:
         """Start its Remote Control Server, or have it wait for its owner's Claude Account."""

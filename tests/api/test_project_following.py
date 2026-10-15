@@ -1,5 +1,6 @@
 """A User follows a running Project: its live log, its CPU and RAM, and its console, where they
-answer what its Remote Control Server asks. Only the Project's owner reaches any of them."""
+answer what its Remote Control Server asks. Only the Project's owner reaches any of them, or its
+Terminal."""
 
 from collections.abc import Callable
 
@@ -182,8 +183,8 @@ def test_a_project_whose_server_shows_the_trust_prompt_asks_to_open_the_console(
     assert status_of(dockyard, signed_in, project) == "running"
 
 
-@pytest.mark.parametrize("stream", ["logs", "console"])
-def test_a_stopped_project_has_no_log_or_console(
+@pytest.mark.parametrize("stream", ["logs", "console", "terminal"])
+def test_a_stopped_project_has_no_log_console_or_terminal(
     dockyard: TestClient, signed_in: dict[str, str], stream: str
 ) -> None:
     project = running_project(dockyard, signed_in)
@@ -192,8 +193,8 @@ def test_a_stopped_project_has_no_log_or_console(
     assert closed_with(dockyard, f"/ws/projects/{project}/{stream}", signed_in) == 4409
 
 
-@pytest.mark.parametrize("stream", ["logs", "console"])
-def test_nobody_but_its_owner_opens_a_projects_log_or_console_not_even_an_administrator(
+@pytest.mark.parametrize("stream", ["logs", "console", "terminal"])
+def test_only_its_owner_opens_a_projects_log_console_or_terminal_not_an_administrator(
     dockyard: TestClient,
     proxy: AccessProxy,
     add_user: Callable[[str], None],
@@ -209,8 +210,8 @@ def test_nobody_but_its_owner_opens_a_projects_log_or_console_not_even_an_admini
     assert dockyard.get(f"/projects/{project}/{stream}", headers=administrator).status_code == 404
 
 
-@pytest.mark.parametrize("stream", ["logs", "console"])
-def test_nobody_reaches_a_log_or_console_without_going_through_the_proxy(
+@pytest.mark.parametrize("stream", ["logs", "console", "terminal"])
+def test_nobody_reaches_a_log_console_or_terminal_without_going_through_the_proxy(
     dockyard: TestClient, signed_in: dict[str, str], stream: str
 ) -> None:
     project = running_project(dockyard, signed_in)
@@ -224,7 +225,7 @@ def test_users_are_told_when_dockyard_cannot_reach_docker(
     project = running_project(dockyard, signed_in)
 
     with runtime.unavailable():
-        for stream in ("logs", "console"):
+        for stream in ("logs", "console", "terminal"):
             assert closed_with(dockyard, f"/ws/projects/{project}/{stream}", signed_in) == 4503
         stats = dockyard.get(f"/api/projects/{project}/stats", headers=signed_in)
 

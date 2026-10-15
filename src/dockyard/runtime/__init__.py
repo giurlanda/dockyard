@@ -192,6 +192,17 @@ class Runtime(Protocol):
         """
         ...
 
+    def open_terminal(self, project: str) -> Tty:
+        """A Terminal: a new interactive login shell of the non-root user, on a TTY of its own,
+        in project_path(project) of the Project's running environment. It ends when the shell
+        exits and when the environment stops or restarts. Ctrl+C typed in it reaches what the
+        shell runs, never the Remote Control Server. Closing it hangs the shell up, which ends
+        it and what it runs.
+
+        Raises ProjectNotRunning when the Remote Control Server is not running.
+        """
+        ...
+
     def project_stats(self, project: str) -> Stats | None:
         """What the Project uses now; None when its Remote Control Server is not running."""
         ...

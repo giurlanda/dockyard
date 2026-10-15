@@ -63,6 +63,8 @@ button.primary, .button.primary {
 }
 .steps { margin: 0 0 12px; padding-left: 20px; }
 .terminal { height: 340px; padding: 6px; background: #000; border-radius: 8px; overflow: hidden; }
+.keys { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+.keys button { min-width: 44px; }
 .code { margin-top: 12px; }
 .code label { display: block; font-weight: 600; margin-bottom: 4px; }
 .code-row { display: flex; gap: 8px; }

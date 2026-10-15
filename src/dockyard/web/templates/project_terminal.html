@@ -1,0 +1,56 @@
+{% extends "base.html" %}
+{% block title %}{{ project.name }} · {{ t("terminal.title") }}{% endblock %}
+{% block head %}<link rel="stylesheet" href="/static/vendor/xterm/xterm.css">{% endblock %}
+{% block header %}{% include "_user.html" %}{% endblock %}
+{% block content %}
+  {% set live = project.status in ("running", "trust_prompt") %}
+  <section class="panel">
+    <div class="panel-heading">
+      <h1>{{ project.name }} · {{ t("terminal.title") }}</h1>
+      {% include "_project_status.html" %}
+    </div>
+    <p class="muted">{{ t("terminal.explain") }}</p>
+    {% if live %}
+      <p class="muted">{{ t("terminal.leave") }}</p>
+    {% endif %}
+  </section>
+  <section class="panel">
+    {% if live %}
+      <div class="terminal" data-terminal="/ws/projects/{{ project.id }}/terminal"
+           role="region" aria-label="{{ t('terminal.terminal') }}"></div>
+      <div class="keys" role="toolbar" aria-label="{{ t('terminal.keys') }}">
+        <button type="button" data-terminal-key="escape">Esc</button>
+        <button type="button" data-terminal-key="tab">Tab</button>
+        <button type="button" data-terminal-key="ctrl-c">Ctrl+C</button>
+        <button type="button" data-terminal-key="up" aria-label="{{ t('terminal.key_up') }}">↑</button>
+        <button type="button" data-terminal-key="down" aria-label="{{ t('terminal.key_down') }}">↓</button>
+      </div>
+      <form class="code" data-terminal-send>
+        <label for="command">{{ t("terminal.command") }}</label>
+        <div class="code-row">
+          <input id="command" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false">
+          <button class="primary">{{ t("terminal.send") }}</button>
+        </div>
+        <p class="hint muted">{{ t("terminal.command_hint") }}</p>
+      </form>
+      {% set ended = "terminal.ended" %}
+      {% set lost = "terminal.lost" %}
+      {% include "_stream_outcomes.html" %}
+    {% else %}
+      <p class="warning">{{ t("stream.not_running") }}</p>
+      {% if project.status == "stopped" %}
+        <form method="post" action="/projects/{{ project.id }}/start">
+          <button class="primary">{{ t("project.start") }}</button>
+        </form>
+      {% endif %}
+    {% endif %}
+    <div class="actions"><a href="/projects/{{ project.id }}">{{ t("project.back") }}</a></div>
+  </section>
+{% endblock %}
+{% block scripts %}
+<script src="/static/vendor/xterm/xterm.js"></script>
+<script src="/static/vendor/xterm/addon-fit.js"></script>
+<script src="/static/vendor/xterm/addon-web-links.js"></script>
+<script src="/static/terminal.js"></script>
+<script src="/static/stream.js"></script>
+{% endblock %}

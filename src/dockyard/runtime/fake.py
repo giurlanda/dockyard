@@ -106,6 +106,12 @@ class FakeRuntime:
         with self._lock:
             self._projects[project].usage = (cpu, memory)
 
+    def terminal_processes(self, project: str) -> int:
+        """How many processes the Project's Terminals run: their shells and what runs in them."""
+        with self._lock:
+            server = self._projects[project].server
+        return server.terminal_processes() if server else 0
+
     def watching(self, project: str) -> int:
         """How many follow the Project's server: its log and its console."""
         with self._lock:
@@ -235,13 +241,10 @@ class FakeRuntime:
         return server.attach()
 
     def attach_project(self, project: str) -> Tty:
-        self.check_reachable()
-        with self._lock:
-            found = self._projects.get(project)
-            server = found.server if found and not found.crashed else None
-        if server is None:
-            raise ProjectNotRunning(project)
-        return server.attach()
+        return self._running_server(project).attach()
+
+    def open_terminal(self, project: str) -> Tty:
+        return self._running_server(project).open_shell(project_path(project))
 
     def project_stats(self, project: str) -> Stats | None:
         self.check_reachable()
@@ -280,6 +283,16 @@ class FakeRuntime:
                     found.starts = 0  # its home goes with its code
         if server:
             server.end()
+
+    def _running_server(self, project: str) -> _Server:
+        """Raises ProjectNotRunning."""
+        self.check_reachable()
+        with self._lock:
+            found = self._projects.get(project)
+            server = found.server if found and not found.crashed else None
+        if server is None:
+            raise ProjectNotRunning(project)
+        return server
 
     def _run(self, project: str) -> None:
         """Start the Project's Remote Control Server in its environment, as the stand-in plays it.
@@ -377,7 +390,8 @@ class _Program:
         with self._lock:
             watcher = _Watcher(self)
             # Like Docker's logs, the replay holds complete lines only: never a pending prompt.
-            watcher.show(self.printed[: self.printed.rfind(b"\n") + 1])
+            if replay := self.printed[: self.printed.rfind(b"\n") + 1]:
+                watcher.show(replay)
             if self._over:
                 watcher.show(b"")
             else:
@@ -400,7 +414,7 @@ class _Program:
                     return
                 if key == CTRL_C:
                     self._print("^C\r\n")
-                    self.exit()
+                    self._interrupted()
                 elif key in "\r\n":
                     self._print("\r\n")
                     line, self._line = self._line, ""
@@ -430,6 +444,10 @@ class _Program:
 
     def _submit(self, line: str) -> None:
         """A line was typed."""
+
+    def _interrupted(self) -> None:
+        """Ctrl+C was typed."""
+        self.exit()
 
     def _resized(self) -> None:
         """Its terminal changed size."""
@@ -490,6 +508,7 @@ class _Server(_Program):
         self._trust = trust
         self._report = report
         self._exited = exited
+        self._shells: list[_Shell] = []  # its environment's Terminals
         self.asking = not trusted
         self._lines(intro)
         if self.asking:
@@ -510,6 +529,30 @@ class _Server(_Program):
         if not over:
             self._exited()
 
+    def end(self) -> None:
+        """Its environment stops or restarts, and its Terminals with it."""
+        with self._lock:
+            super().end()
+            shells, self._shells = self._shells, []
+        for shell in shells:
+            shell.end()
+
+    def terminal_processes(self) -> int:
+        with self._lock:
+            return sum(shell.processes() for shell in self._shells)
+
+    def open_shell(self, path: str) -> _Watcher:
+        """A Terminal in its environment."""
+        shell = _Shell(path)
+        watcher = shell.attach()
+        with self._lock:
+            if self._over:
+                shell.end()
+            else:
+                self._shells.append(shell)
+        shell.prompt()
+        return watcher
+
     def _submit(self, line: str) -> None:
         if not self.asking:
             return
@@ -529,6 +572,54 @@ class _Server(_Program):
 
     def _lines(self, lines: list[str]) -> None:
         self._print("".join(f"{line}\r\n" for line in lines))
+
+
+class _Shell(_Program):
+    """`bash -l` of the non-root user in a Project's path, as far as the contract suite types in
+    it."""
+
+    def __init__(self, path: str) -> None:
+        super().__init__()
+        self._path = path
+        self._sleeping = False  # it runs `sleep`, until interrupted
+
+    def prompt(self) -> None:
+        self._print(f"ubuntu@dockyard:{self._path}$ ")
+
+    def processes(self) -> int:
+        with self._lock:
+            return 0 if self._over else 1 + self._sleeping
+
+    def detach(self, watcher: _Watcher) -> None:
+        """Its Terminal lets go of it: hung up, it ends, and what it runs with it."""
+        super().detach(watcher)
+        self.end()
+
+    def _interrupted(self) -> None:
+        self._sleeping = False
+        self.prompt()
+
+    def _submit(self, line: str) -> None:
+        if self._sleeping:
+            return  # the TTY drops what is typed meanwhile when Ctrl+C interrupts it
+        command = line.strip()
+        if command.startswith("sleep "):
+            self._sleeping = True
+            return
+        if command == "exit":
+            self._print("logout\r\n")
+            self.exit()
+            return
+        if command == "pwd":
+            self._print(f"{self._path}\r\n")
+        elif command == "id -u":
+            self._print("1000\r\n")
+        elif command == "stty size":
+            rows, cols = self._size
+            self._print(f"{rows} {cols}\r\n")
+        elif command:
+            self._print(f"bash: {command.split()[0]}: command not found\r\n")
+        self.prompt()
 
 
 class _Watcher:

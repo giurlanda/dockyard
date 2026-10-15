@@ -173,6 +173,11 @@ def projects_routes(projects: Projects, pages: Pages) -> APIRouter:
         if tty := await opened(websocket, lambda: projects.attach_console(user, project)):
             await bridge(websocket, tty)
 
+    @router.websocket("/ws/projects/{project}/terminal")
+    async def terminal(websocket: WebSocket, user: CurrentUser, project: str) -> None:
+        if tty := await opened(websocket, lambda: projects.open_terminal(user, project)):
+            await bridge(websocket, tty)
+
     @router.post("/api/projects/{project}/{action}", response_model=ProjectOut)
     def run_project(request: Request, user: CurrentUser, project: str, action: Lifecycle) -> object:
         try:
@@ -239,6 +244,10 @@ def projects_routes(projects: Projects, pages: Pages) -> APIRouter:
     @router.get("/projects/{project}/console", response_class=HTMLResponse)
     def console_page(request: Request, user: CurrentUser, project: str) -> HTMLResponse:
         return following_page(request, user, project, "project_console.html")
+
+    @router.get("/projects/{project}/terminal", response_class=HTMLResponse)
+    def terminal_page(request: Request, user: CurrentUser, project: str) -> HTMLResponse:
+        return following_page(request, user, project, "project_terminal.html")
 
     def following_page(request: Request, user: User, project: str, template: str) -> HTMLResponse:
         found = projects.get(user, project)

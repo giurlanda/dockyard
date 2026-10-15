@@ -108,6 +108,7 @@
   "project.follow": "Follow it",
   "project.logs": "Log",
   "project.console": "Console",
+  "project.terminal": "Terminal",
   "project.back": "Back to the Project",
   "logs.title": "Log",
   "logs.explain": "What the Remote Control Server prints, as it prints it, starting with its last 1000 lines.",
@@ -121,5 +122,17 @@
   "console.send": "Send",
   "stream.ended": "The Remote Control Server stopped or restarted. Reload the page to follow it again.",
   "stream.not_running": "This Project is not running: start it from its page.",
-  "stream.lost": "The connection was lost. Reload the page to follow the Remote Control Server again."
+  "stream.lost": "The connection was lost. Reload the page to follow the Remote Control Server again.",
+  "terminal.title": "Terminal",
+  "terminal.explain": "A shell in this Project's folder, as its non-root user: run git, gh, glab or Claude Code (claude, or claude --remote-control). Ctrl+C here stops only what the shell runs.",
+  "terminal.leave": "Leaving this page closes the shell and ends whatever runs in it.",
+  "terminal.terminal": "Terminal of the Project",
+  "terminal.keys": "Keys",
+  "terminal.key_up": "Arrow up",
+  "terminal.key_down": "Arrow down",
+  "terminal.command": "Command",
+  "terminal.command_hint": "Sent followed by Enter, handy on a phone; leave it empty to press Enter alone.",
+  "terminal.send": "Send",
+  "terminal.ended": "The shell ended: it exited, or the Project stopped or restarted. Reload the page to open a new one.",
+  "terminal.lost": "The connection was lost, and the shell with it. Reload the page to open a new one."
 }
