@@ -179,3 +179,56 @@ def test_a_signed_in_user_asking_for_a_missing_page_gets_a_page_in_their_languag
     assert page.status_code == 404
     assert '<html lang="it">' in page.text
     assert "Pagina non trovata" in page.text
+
+
+ANOTHER_SITE = {"Origin": "https://another-site.example"}
+
+
+def test_websockets_opened_by_another_site_are_refused(
+    dockyard: TestClient, proxy: AccessProxy
+) -> None:
+    with (
+        pytest.raises(WebSocketDisconnect) as refused,
+        dockyard.websocket_connect(
+            "/ws/claude-account/login", headers={**proxy.headers(ADMINISTRATOR), **ANOTHER_SITE}
+        ) as ws,
+    ):
+        ws.receive_bytes()
+
+    assert refused.value.code == 4403
+
+
+def test_actions_posted_by_another_site_are_refused(
+    dockyard: TestClient, proxy: AccessProxy
+) -> None:
+    signed_in = proxy.headers(ADMINISTRATOR)
+
+    response = dockyard.post("/api/claude-account/login", headers={**signed_in, **ANOTHER_SITE})
+
+    assert response.status_code == 403
+    assert response.json()["error"] == "cross_site"
+    assert (
+        dockyard.get("/api/claude-account", headers=signed_in).json()["login_in_progress"] is False
+    )
+
+
+def test_pages_explain_why_an_action_from_another_site_was_refused(
+    dockyard: TestClient, proxy: AccessProxy
+) -> None:
+    page = dockyard.post(
+        "/language", data={"lang": "it"}, headers={**proxy.headers(ADMINISTRATOR), **ANOTHER_SITE}
+    )
+
+    assert page.status_code == 403
+    assert "another site" in page.text
+
+
+def test_actions_from_dockyard_itself_are_accepted(
+    dockyard: TestClient, proxy: AccessProxy
+) -> None:
+    response = dockyard.post(
+        "/api/claude-account/login",
+        headers={**proxy.headers(ADMINISTRATOR), "Origin": "http://testserver"},
+    )
+
+    assert response.status_code == 202

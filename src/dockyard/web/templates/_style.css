@@ -1,12 +1,14 @@
 :root {
   --bg: #f5f4f0; --panel: #ffffff; --ink: #1d1c19; --muted: #66635b;
   --line: #e0ddd4; --accent: #1f5f8b; --accent-ink: #ffffff; --bad: #a8261c;
+  --good: #2d6a2e; --warn-bg: #fbf3dc; --warn-line: #e6cf8b;
   color-scheme: light dark;
 }
 @media (prefers-color-scheme: dark) {
   :root {
     --bg: #161614; --panel: #201f1c; --ink: #ebe9e3; --muted: #a3a097;
     --line: #34322d; --accent: #6aaedc; --accent-ink: #0d1a24; --bad: #ef6b62;
+    --good: #7bc77c; --warn-bg: #2d2717; --warn-line: #5e4f22;
   }
 }
 * { box-sizing: border-box; }
@@ -45,3 +47,31 @@ h2 { font-size: 16px; margin: 0 0 8px; }
 .notice { max-width: 560px; margin: 12vh auto 0; }
 .notice h1 { color: var(--bad); }
 a { color: var(--accent); }
+.badge.good { border-color: var(--good); color: var(--good); }
+.badge.bad { border-color: var(--bad); color: var(--bad); }
+.panel-heading { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 12px; margin-bottom: 8px; }
+.panel-heading h2 { margin: 0; }
+.warning {
+  background: var(--warn-bg); border: 1px solid var(--warn-line); border-radius: 8px; padding: 8px 12px;
+}
+button, .button {
+  display: inline-block; font: inherit; padding: 6px 14px; border-radius: 6px; cursor: pointer;
+  border: 1px solid var(--line); background: transparent; color: var(--ink); text-decoration: none;
+}
+button.primary, .button.primary {
+  background: var(--accent); border-color: var(--accent); color: var(--accent-ink);
+}
+.steps { margin: 0 0 12px; padding-left: 20px; }
+.terminal { height: 340px; padding: 6px; background: #000; border-radius: 8px; overflow: hidden; }
+.code { margin-top: 12px; }
+.code label { display: block; font-weight: 600; margin-bottom: 4px; }
+.code-row { display: flex; gap: 8px; }
+.code-row input {
+  flex: 1; min-width: 0; font: inherit; padding: 6px 10px; border-radius: 6px;
+  border: 1px solid var(--line); background: var(--bg); color: var(--ink);
+}
+.outcome { font-weight: 600; }
+.outcome.good { color: var(--good); }
+.outcome.bad { color: var(--bad); }
+.actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 16px; margin-top: 12px; }
+.actions form { margin: 0; }

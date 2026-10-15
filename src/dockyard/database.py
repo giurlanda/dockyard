@@ -17,6 +17,21 @@ MIGRATIONS = (
         created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
     );
     """,
+    # runtime_id names the User's resources in the Runtime (their Claude config). It is random, so
+    # it is never reused: not after a User is removed, not by a reinstalled Instance.
+    """
+    CREATE TABLE users_new (
+        id         INTEGER PRIMARY KEY,
+        email      TEXT NOT NULL UNIQUE,
+        role       TEXT NOT NULL CHECK (role IN ('administrator', 'user')),
+        created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
+        runtime_id TEXT NOT NULL UNIQUE DEFAULT (lower(hex(randomblob(16))))
+    );
+    INSERT INTO users_new (id, email, role, created_at)
+        SELECT id, email, role, created_at FROM users;
+    DROP TABLE users;
+    ALTER TABLE users_new RENAME TO users;
+    """,
 )
 
 

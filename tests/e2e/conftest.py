@@ -1,7 +1,8 @@
 """Seam C harness: a running Dockyard driven by a real browser.
 
-Dockyard is served over HTTP from a background thread. The browser identifies itself with the
-development identity, which these tests enable explicitly.
+Each test gets a fresh Instance, served over HTTP from a background thread with the in-memory
+Runtime. The browser identifies itself with the development identity, which these tests enable
+explicitly.
 """
 
 from __future__ import annotations
@@ -17,6 +18,7 @@ import uvicorn
 from cryptography.fernet import Fernet
 from playwright.sync_api import Browser, BrowserContext, Page
 
+from dockyard.runtime.fake import FakeRuntime
 from dockyard.settings import Settings
 from dockyard.web import create_app
 
@@ -32,9 +34,9 @@ def _free_port() -> int:
         return port
 
 
-@pytest.fixture(scope="session")
-def dockyard_url(tmp_path_factory: pytest.TempPathFactory) -> Iterator[str]:
-    data_dir: Path = tmp_path_factory.mktemp("dockyard-data")
+@pytest.fixture
+def dockyard_url(tmp_path: Path) -> Iterator[str]:
+    data_dir = tmp_path / "dockyard-data"
     settings = Settings.from_env(
         {
             "DOCKYARD_SECRET_KEY": Fernet.generate_key().decode(),
@@ -45,7 +47,9 @@ def dockyard_url(tmp_path_factory: pytest.TempPathFactory) -> Iterator[str]:
     )
     port = _free_port()
     server = uvicorn.Server(
-        uvicorn.Config(create_app(settings), host="127.0.0.1", port=port, log_level="warning")
+        uvicorn.Config(
+            create_app(settings, FakeRuntime()), host="127.0.0.1", port=port, log_level="warning"
+        )
     )
     thread = threading.Thread(target=server.run, daemon=True)
     thread.start()
@@ -81,3 +85,7 @@ def open_as(browser: Browser, dockyard_url: str) -> Iterator[OpenAs]:
     yield open_as
     for context in contexts:
         context.close()
+
+
+def fits_the_screen(page: Page) -> bool:
+    return bool(page.evaluate("document.documentElement.scrollWidth <= window.innerWidth"))

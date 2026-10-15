@@ -34,6 +34,13 @@ mypy_path = "src"
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = "-ra"
+# A terminal that never shows what a test waits for must fail the test, not hang the suite.
+# Fixtures are not timed: the first Base Image build takes minutes.
+timeout = 60
+timeout_func_only = true
+markers = [
+    "slow: needs a Docker daemon; the first run builds the Base Image (minutes)",
+]
 
 [dependency-groups]
 dev = [
@@ -41,6 +48,9 @@ dev = [
     "mypy>=2.4.0",
     "pytest>=9.1.1",
     "pytest-playwright>=0.10.0",
+    "pytest-timeout>=2.4.0",
+    "pyyaml>=6.0.3",
     "ruff>=0.17.0",
     "types-docker>=7.2.0.20261006",
+    "types-pyyaml>=6.0.12.20260906",
 ]

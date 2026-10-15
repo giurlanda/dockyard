@@ -31,6 +31,7 @@ services:
       DOCKYARD_FIRST_ADMINISTRATOR_EMAIL: ${DOCKYARD_FIRST_ADMINISTRATOR_EMAIL:-}
       DOCKYARD_CF_ACCESS_TEAM: ${DOCKYARD_CF_ACCESS_TEAM:-}
       DOCKYARD_CF_ACCESS_AUD: ${DOCKYARD_CF_ACCESS_AUD:-}
+      DOCKYARD_BASE_IMAGE: ${DOCKYARD_BASE_IMAGE:-dockyard-base:latest}
     volumes:
       - dockyard-data:/data
     ports:
@@ -38,6 +39,15 @@ services:
     # docker-api reaches the socket proxy; default reaches the internet (Cloudflare signing keys).
     networks: [docker-api, default]
     depends_on: [socket-proxy]
+
+  # The Base Image every Project environment starts from. This service only builds it with
+  # Dockyard (docker compose up builds both) and exits at once: Dockyard runs the image itself.
+  base-image:
+    build: images/base
+    image: dockyard-base:latest
+    command: ["true"]
+    restart: "no"
+    network_mode: none
 
 networks:
   # No internet, no published ports: only Dockyard and the socket proxy are on it.

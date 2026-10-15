@@ -14,6 +14,7 @@ from cryptography.fernet import Fernet
 from cryptography.hazmat.primitives.asymmetric import rsa
 from fastapi.testclient import TestClient
 
+from dockyard.runtime.fake import FakeRuntime
 from dockyard.settings import Settings
 from dockyard.web import create_app
 
@@ -100,10 +101,17 @@ def proxy() -> AccessProxy:
 
 
 @pytest.fixture
-def start_dockyard(tmp_path: Path, proxy: AccessProxy) -> Callable[..., TestClient]:
+def runtime() -> FakeRuntime:
+    return FakeRuntime()
+
+
+@pytest.fixture
+def start_dockyard(
+    tmp_path: Path, proxy: AccessProxy, runtime: FakeRuntime
+) -> Callable[..., TestClient]:
     """Start Dockyard with the standard test Instance configuration, plus overrides.
 
-    An override of None removes that setting.
+    An override of None removes that setting. Every start shares the same data and Runtime.
     """
 
     def start(**overrides: str | None) -> TestClient:
@@ -113,7 +121,7 @@ def start_dockyard(tmp_path: Path, proxy: AccessProxy) -> Callable[..., TestClie
                 env.pop(name, None)
             else:
                 env[name] = value
-        return TestClient(create_app(Settings.from_env(env), signing_keys=proxy))
+        return TestClient(create_app(Settings.from_env(env), runtime, signing_keys=proxy))
 
     return start
 
@@ -121,3 +129,15 @@ def start_dockyard(tmp_path: Path, proxy: AccessProxy) -> Callable[..., TestClie
 @pytest.fixture
 def dockyard(start_dockyard: Callable[..., TestClient]) -> TestClient:
     return start_dockyard()
+
+
+@pytest.fixture
+def add_user(start_dockyard: Callable[..., TestClient]) -> Callable[[str], None]:
+    """Until Invitations exist, a User is added the one way the public interface allows: by
+    naming them first Administrator for a restart. Every start shares the same data and Runtime.
+    """
+
+    def add(email: str) -> None:
+        start_dockyard(DOCKYARD_FIRST_ADMINISTRATOR_EMAIL=email)
+
+    return add

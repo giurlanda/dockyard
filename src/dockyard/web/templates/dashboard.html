@@ -1,19 +1,29 @@
 {% extends "base.html" %}
 {% block title %}{{ t("dashboard.title") }}{% endblock %}
-{% block header %}
-  <div class="who">
-    <span data-testid="user-email">{{ user.email }}</span>
-    <span class="badge" data-testid="user-role">{{ t("role." ~ user.role) }}</span>
-    <form class="languages" method="post" action="/language" aria-label="{{ t('language.label') }}">
-      <input type="hidden" name="next" value="{{ path }}">
-      {% for code, name in languages.items() %}
-        <button name="lang" value="{{ code }}" lang="{{ code }}"
-                aria-pressed="{{ 'true' if code == lang else 'false' }}">{{ name }}</button>
-      {% endfor %}
-    </form>
-  </div>
-{% endblock %}
+{% block header %}{% include "_user.html" %}{% endblock %}
 {% block content %}
+  <section class="panel" aria-labelledby="claude-account">
+    <div class="panel-heading">
+      <h2 id="claude-account">{{ t("claude_account.heading") }}</h2>
+      {% if claude_account.connected %}
+        <span class="badge good" data-testid="claude-account-status">{{ t("claude_account.connected") }}</span>
+      {% else %}
+        <span class="badge bad" data-testid="claude-account-status">{{ t("claude_account.not_connected") }}</span>
+      {% endif %}
+    </div>
+    <p class="muted">{{ t("claude_account.explain") }}</p>
+    <p class="warning">{{ t("claude_account.warning") }}</p>
+    {% if claude_account.login_in_progress %}
+      <p>{{ t("claude_account.in_progress") }}
+        <a class="button primary" href="/claude-account/login">{{ t("claude_account.continue") }}</a></p>
+    {% else %}
+      <form method="post" action="/claude-account/login">
+        <button class="primary">
+          {{ t("claude_account.reconnect" if claude_account.connected else "claude_account.connect") }}
+        </button>
+      </form>
+    {% endif %}
+  </section>
   <section class="panel">
     <h2>{{ t("projects.heading") }}</h2>
     <p class="muted">{{ t("projects.empty") }}</p>

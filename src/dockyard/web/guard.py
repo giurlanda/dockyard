@@ -1,4 +1,7 @@
-"""Every HTTP request and WebSocket passes here: without a verified User, nothing gets through."""
+"""Every HTTP request and WebSocket passes here.
+
+Nothing gets through without a verified User, nor when another site acts on that User's behalf.
+"""
 
 from __future__ import annotations
 
@@ -6,6 +9,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from enum import StrEnum
 from typing import Annotated
+from urllib.parse import urlsplit
 
 import anyio
 from fastapi import Depends
@@ -21,6 +25,7 @@ class Refusal(StrEnum):
     UNAUTHENTICATED = "unauthenticated"
     NOT_INVITED = "not_invited"
     IDENTITY_UNAVAILABLE = "identity_unavailable"
+    CROSS_SITE = "cross_site"
 
     @property
     def status_code(self) -> int:
@@ -28,15 +33,22 @@ class Refusal(StrEnum):
 
     @property
     def websocket_close_code(self) -> int:
-        """Application close codes mirror the HTTP status: 4401, 4403, ..."""
-        return 4000 + self.status_code
+        return websocket_close_code(self.status_code)
+
+
+def websocket_close_code(status_code: int) -> int:
+    """Application close codes mirror the HTTP status: 4401, 4403, 4404, ..."""
+    return 4000 + status_code
 
 
 _STATUS_CODES = {
     Refusal.UNAUTHENTICATED: 401,
     Refusal.NOT_INVITED: 403,
     Refusal.IDENTITY_UNAVAILABLE: 503,
+    Refusal.CROSS_SITE: 403,
 }
+# A browser names the page that opens a WebSocket or sends one of these requests in Origin.
+UNSAFE_METHODS = frozenset({"POST", "PUT", "PATCH", "DELETE"})
 
 
 @dataclass(frozen=True)
@@ -79,6 +91,9 @@ class IdentityGuard:
         await self._refuse(conn, admitted)(scope, receive, send)
 
     def _admit(self, conn: HTTPConnection) -> User | Refused:
+        if _from_another_site(conn):
+            # The proxy's cookie would vouch for the person, but another site is acting for them.
+            return Refused(Refusal.CROSS_SITE)
         try:
             email = self._identity.verified_email(conn)
         except IdentityUnavailable:
@@ -86,6 +101,15 @@ class IdentityGuard:
         if email is None:
             return Refused(Refusal.UNAUTHENTICATED)
         return self._accounts.find_user(email) or Refused(Refusal.NOT_INVITED, email)
+
+
+def _from_another_site(conn: HTTPConnection) -> bool:
+    if conn.scope["type"] == "http" and conn.scope["method"] not in UNSAFE_METHODS:
+        return False
+    origin = conn.headers.get("origin")
+    if origin is None:
+        return False  # not sent by a browser
+    return urlsplit(origin).netloc != conn.headers.get("host")
 
 
 def current_user(conn: HTTPConnection) -> User:

@@ -45,9 +45,26 @@ class Pages:
             conn, "notice.html", status_code=status_code, key=key, home=home, params=params
         )
 
+    def problem(
+        self, conn: HTTPConnection, error: str, *, key: str, status_code: int, **params: object
+    ) -> Response:
+        """Why a request failed: {"error", "message"} for the API, a notice page for people."""
+        if is_api(conn):
+            message = translator(language_for(conn))(f"{key}.body", **params)
+            return JSONResponse({"error": error, "message": message}, status_code)
+        return self.render(
+            conn, "notice.html", status_code=status_code, key=key, home=False, params=params
+        )
+
     def refusal(self, conn: HTTPConnection, refused: Refused) -> Response:
-        key, status_code = f"refused.{refused.reason}", refused.reason.status_code
-        if conn.url.path.startswith("/api/"):
-            message = translator(language_for(conn))(f"{key}.body", email=refused.email)
-            return JSONResponse({"error": refused.reason, "message": message}, status_code)
-        return self.notice(conn, key, status_code=status_code, email=refused.email)
+        return self.problem(
+            conn,
+            refused.reason,
+            key=f"refused.{refused.reason}",
+            status_code=refused.reason.status_code,
+            email=refused.email,
+        )
+
+
+def is_api(conn: HTTPConnection) -> bool:
+    return conn.url.path.startswith("/api/")

@@ -5,6 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>{% block title %}{% endblock %} · Dockyard</title>
 <style>{% include "_style.css" %}</style>
+{% block head %}{% endblock %}
 </head>
 <body>
 <header class="topbar">
@@ -14,5 +15,6 @@
 <main>
 {% block content %}{% endblock %}
 </main>
+{% block scripts %}{% endblock %}
 </body>
 </html>

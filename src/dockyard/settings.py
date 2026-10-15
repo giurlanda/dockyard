@@ -14,6 +14,7 @@ FALSE = ("", "0", "false", "no", "off")
 EMAIL = re.compile(r"^[^@\s]+@[^@\s]+$")
 TEAM_NAME = re.compile(r"^[A-Za-z0-9-]+$")
 GENERATE_SECRET_KEY = "Generate one with: openssl rand -base64 32 | tr '+/' '-_'"
+DEFAULT_BASE_IMAGE = "dockyard-base:latest"  # built by compose.yaml from images/base
 
 
 class ConfigError(Exception):
@@ -53,6 +54,7 @@ class Settings:
     data_dir: Path
     listen_host: str
     listen_port: int
+    base_image: str
 
     @classmethod
     def from_env(cls, env: Mapping[str, str]) -> Settings:
@@ -118,6 +120,7 @@ class Settings:
             data_dir=Path(env.get("DOCKYARD_DATA_DIR", "").strip() or "/data"),
             listen_host=env.get("DOCKYARD_LISTEN_HOST", "").strip() or "127.0.0.1",
             listen_port=int(listen_port),
+            base_image=env.get("DOCKYARD_BASE_IMAGE", "").strip() or DEFAULT_BASE_IMAGE,
         )
 
 

@@ -3,13 +3,9 @@
 import pytest
 from playwright.sync_api import Page, expect
 
-from .conftest import ADMINISTRATOR, PHONE, OpenAs
+from .conftest import ADMINISTRATOR, PHONE, OpenAs, fits_the_screen
 
 STRANGER = "someone.who.was.never.invited@another-organisation.example.com"
-
-
-def fits_the_screen(page: Page) -> bool:
-    return bool(page.evaluate("document.documentElement.scrollWidth <= window.innerWidth"))
 
 
 def test_the_first_administrator_lands_on_their_dashboard(open_as: OpenAs) -> None:

@@ -1,0 +1,42 @@
+{% extends "base.html" %}
+{% block title %}{{ t("sign_in.title") }}{% endblock %}
+{% block head %}<link rel="stylesheet" href="/static/vendor/xterm/xterm.css">{% endblock %}
+{% block header %}{% include "_user.html" %}{% endblock %}
+{% block content %}
+  <section class="panel">
+    <h1>{{ t("sign_in.title") }}</h1>
+    <ol class="steps">
+      <li>{{ t("sign_in.step_open") }}</li>
+      <li>{{ t("sign_in.step_copy") }}</li>
+      <li>{{ t("sign_in.step_paste") }}</li>
+    </ol>
+    <p class="warning">{{ t("claude_account.warning") }}</p>
+  </section>
+  <section class="panel">
+    <div class="terminal" data-terminal="/ws/claude-account/login"
+         role="region" aria-label="{{ t('sign_in.terminal') }}"></div>
+    <form class="code" data-terminal-send data-while-signing-in>
+      <label for="code">{{ t("sign_in.code") }}</label>
+      <div class="code-row">
+        <input id="code" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" required>
+        <button class="primary">{{ t("sign_in.send") }}</button>
+      </div>
+    </form>
+    <p class="outcome good" data-outcome="connected" hidden>{{ t("sign_in.connected") }}</p>
+    <p class="outcome bad" data-outcome="not-connected" hidden>{{ t("sign_in.not_connected") }}</p>
+    <p class="outcome bad" data-outcome="lost" hidden>{{ t("sign_in.lost") }}</p>
+    <div class="actions">
+      <a href="/">{{ t("notice.home") }}</a>
+      <form method="post" action="/claude-account/login/cancel" data-while-signing-in>
+        <button>{{ t("sign_in.cancel") }}</button>
+      </form>
+    </div>
+  </section>
+{% endblock %}
+{% block scripts %}
+<script src="/static/vendor/xterm/xterm.js"></script>
+<script src="/static/vendor/xterm/addon-fit.js"></script>
+<script src="/static/vendor/xterm/addon-web-links.js"></script>
+<script src="/static/terminal.js"></script>
+<script src="/static/sign-in.js"></script>
+{% endblock %}

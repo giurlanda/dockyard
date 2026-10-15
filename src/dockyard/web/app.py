@@ -2,26 +2,34 @@
 
 from __future__ import annotations
 
+import logging
 from typing import Annotated
 
 from fastapi import FastAPI, Form, Request
 from fastapi.exception_handlers import http_exception_handler
 from fastapi.responses import HTMLResponse, RedirectResponse
+from fastapi.staticfiles import StaticFiles
 from starlette.exceptions import HTTPException
 from starlette.responses import Response
 
 from ..accounts import Accounts
 from ..database import Database
 from ..identity import SigningKeys, identity_for
+from ..runtime import Runtime, RuntimeUnavailable
 from ..settings import Settings
+from .claude_account import claude_account_routes, claude_account_status
 from .guard import CurrentUser, IdentityGuard
 from .i18n import LANGUAGE_COOKIE, Language
-from .pages import Pages
+from .pages import Pages, is_api
 
 ONE_YEAR = 365 * 24 * 3600
 
+log = logging.getLogger(__name__)
 
-def create_app(settings: Settings, *, signing_keys: SigningKeys | None = None) -> FastAPI:
+
+def create_app(
+    settings: Settings, runtime: Runtime, *, signing_keys: SigningKeys | None = None
+) -> FastAPI:
     database = Database(settings.data_dir / "dockyard.db")
     database.migrate()
     accounts = Accounts(database)
@@ -36,15 +44,26 @@ def create_app(settings: Settings, *, signing_keys: SigningKeys | None = None) -
         refuse=pages.refusal,
     )
 
+    @app.exception_handler(RuntimeUnavailable)
+    async def runtime_unavailable(request: Request, error: RuntimeUnavailable) -> Response:
+        log.warning("The Runtime is unavailable: %s", error)
+        error_name = "runtime_unavailable"
+        return pages.problem(request, error_name, key=error_name, status_code=503)
+
     @app.exception_handler(HTTPException)
     async def http_error(request: Request, error: HTTPException) -> Response:
-        if error.status_code == 404 and not request.url.path.startswith("/api/"):
+        if error.status_code == 404 and not is_api(request):
             return pages.notice(request, "not_found", status_code=404, home=True)
         return await http_exception_handler(request, error)
 
     @app.get("/", response_class=HTMLResponse)
     def dashboard(request: Request, user: CurrentUser) -> HTMLResponse:
-        return pages.render(request, "dashboard.html", user=user)
+        return pages.render(
+            request,
+            "dashboard.html",
+            user=user,
+            claude_account=claude_account_status(runtime, user),
+        )
 
     @app.post("/language")
     def switch_language(
@@ -58,6 +77,8 @@ def create_app(settings: Settings, *, signing_keys: SigningKeys | None = None) -
     def me(user: CurrentUser) -> dict[str, str]:
         return {"email": user.email, "role": user.role}
 
+    app.include_router(claude_account_routes(runtime, pages))
+    app.mount("/static", StaticFiles(packages=[("dockyard.web", "static")]), name="static")
     return app
 
 

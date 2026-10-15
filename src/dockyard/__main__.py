@@ -8,7 +8,8 @@ import sys
 
 import uvicorn
 
-from .runtime.docker import DockerRuntime, RuntimeUnavailable
+from .runtime import RuntimeUnavailable
+from .runtime.docker import DockerRuntime
 from .settings import ConfigError, Settings
 from .web import create_app
 
@@ -21,11 +22,12 @@ def main() -> int:
         print(error, file=sys.stderr)
         return 2
     try:
-        DockerRuntime.from_env().check_reachable()
+        runtime = DockerRuntime.from_env(base_image=settings.base_image)
+        runtime.check_reachable()
     except RuntimeUnavailable as error:
         print(error, file=sys.stderr)
         return 1
-    uvicorn.run(create_app(settings), host=settings.listen_host, port=settings.listen_port)
+    uvicorn.run(create_app(settings, runtime), host=settings.listen_host, port=settings.listen_port)
     return 0
 
 

@@ -17,6 +17,7 @@ class Role(StrEnum):
 class User:
     email: str
     role: Role
+    runtime_id: str  # names the User's resources in the Runtime; never reused
 
 
 def normalise_email(email: str) -> str:
@@ -38,6 +39,9 @@ class Accounts:
     def find_user(self, email: str) -> User | None:
         with self._db.transaction() as conn:
             row = conn.execute(
-                "SELECT email, role FROM users WHERE email = ?", (normalise_email(email),)
+                "SELECT email, role, runtime_id FROM users WHERE email = ?",
+                (normalise_email(email),),
             ).fetchone()
-        return User(email=row["email"], role=Role(row["role"])) if row else None
+        if row is None:
+            return None
+        return User(email=row["email"], role=Role(row["role"]), runtime_id=row["runtime_id"])
