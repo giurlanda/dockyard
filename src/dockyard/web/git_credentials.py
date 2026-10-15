@@ -14,7 +14,12 @@ from pydantic import BaseModel
 from starlette.responses import Response
 
 from ..accounts import User
-from ..git_credentials import GitCredential, GitCredentialRefused, GitCredentials
+from ..git_credentials import (
+    GitCredential,
+    GitCredentialInUse,
+    GitCredentialRefused,
+    GitCredentials,
+)
 from ..providers import Provider
 from .guard import CurrentUser
 from .pages import Pages
@@ -85,6 +90,26 @@ def git_credentials_routes(credentials: GitCredentials, pages: Pages) -> APIRout
             problem=problem,
         )
 
+    def show_credential(
+        request: Request,
+        user: User,
+        credential: GitCredential,
+        *,
+        changed: Change | None = None,
+        problem: str | None = None,
+        status_code: int = 200,
+    ) -> HTMLResponse:
+        return pages.render(
+            request,
+            "git_credential.html",
+            status_code=status_code,
+            user=user,
+            credential=credential,
+            used_by=credentials.used_by(user, credential.id),
+            changed=changed,
+            problem=problem,
+        )
+
     def change_from_page(
         request: Request, user: User, credential: str, change: Change, value: str
     ) -> Response:
@@ -95,15 +120,7 @@ def git_credentials_routes(credentials: GitCredentials, pages: Pages) -> APIRout
         try:
             changed = credentials.update(user, credential, **{change: value})
         except GitCredentialRefused as refusal:
-            return pages.render(
-                request,
-                "git_credential.html",
-                status_code=422,
-                user=user,
-                credential=found,
-                changed=None,
-                problem=_problem(refusal),
-            )
+            return show_credential(request, user, found, problem=_problem(refusal), status_code=422)
         if changed is None:
             raise HTTPException(404)
         return RedirectResponse(f"/git-credentials/{credential}?changed={change}", status_code=303)
@@ -142,9 +159,20 @@ def git_credentials_routes(credentials: GitCredentials, pages: Pages) -> APIRout
         return GitCredentialOut.of(changed)
 
     @router.delete("/api/git-credentials/{credential}", status_code=204)
-    def delete_credential(user: CurrentUser, credential: str) -> None:
-        if not credentials.delete(user, credential):
+    def delete_credential(request: Request, user: CurrentUser, credential: str) -> Response:
+        try:
+            deleted = credentials.delete(user, credential)
+        except GitCredentialInUse as in_use:
+            return pages.problem(
+                request,
+                "in_use",
+                key="git_credential_in_use",
+                status_code=409,
+                projects=", ".join(in_use.projects),
+            )
+        if not deleted:
             raise HTTPException(404)
+        return Response(status_code=204)
 
     @router.get("/git-credentials/new", response_class=HTMLResponse)
     def new_credential_form(request: Request, user: CurrentUser) -> HTMLResponse:
@@ -178,14 +206,7 @@ def git_credentials_routes(credentials: GitCredentials, pages: Pages) -> APIRout
         found = credentials.get(user, credential)
         if found is None:
             raise HTTPException(404)
-        return pages.render(
-            request,
-            "git_credential.html",
-            user=user,
-            credential=found,
-            changed=changed,
-            problem=None,
-        )
+        return show_credential(request, user, found, changed=changed)
 
     @router.post("/git-credentials/{credential}/label", response_model=None)
     def rename_from_page(
@@ -199,9 +220,18 @@ def git_credentials_routes(credentials: GitCredentials, pages: Pages) -> APIRout
     ) -> Response:
         return change_from_page(request, user, credential, "token", token)
 
-    @router.post("/git-credentials/{credential}/delete")
-    def delete_from_page(user: CurrentUser, credential: str) -> RedirectResponse:
-        if not credentials.delete(user, credential):
+    @router.post("/git-credentials/{credential}/delete", response_model=None)
+    def delete_from_page(request: Request, user: CurrentUser, credential: str) -> Response:
+        try:
+            deleted = credentials.delete(user, credential)
+        except GitCredentialInUse:
+            found = credentials.get(user, credential)
+            if found is None:
+                raise HTTPException(404) from None
+            return show_credential(
+                request, user, found, problem="git_credential.in_use_refused", status_code=409
+            )
+        if not deleted:
             raise HTTPException(404)
         return RedirectResponse("/", status_code=303)
 

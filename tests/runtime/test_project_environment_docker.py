@@ -1,16 +1,21 @@
 """What only Docker can show about a Project's environment: how it survives crashes, the network
-it is on, and what it mounts. These look at Docker directly, from outside the environment."""
+it is on, what it mounts, and where its Git Credential is not. These look at Docker directly, from
+outside the environment."""
 
+import json
 from collections.abc import Callable
 
 import docker
 import pytest
 from docker.models.containers import Container
 
-from dockyard.runtime import ProjectStatus, Runtime
+from dockyard.runtime import GitToken, ProjectStatus, Runtime
 
-from .conftest import wait_until
+from .conftest import PUBLIC_REPOSITORY, new_project, wait_until
+from .test_clone import finished
 from .test_project_environment import cloned, server_ready
+
+TOKEN = "github_pat_11DOCKYARD0never0on0disk"
 
 pytestmark = [
     pytest.mark.slow,
@@ -18,9 +23,9 @@ pytestmark = [
 ]
 
 
-def environment_of(daemon: docker.DockerClient, project: str) -> Container:
+def environment_of(daemon: docker.DockerClient, project: str, kind: str = "project") -> Container:
     (found,) = daemon.containers.list(
-        all=True, filters={"label": [f"dockyard.project={project}", "dockyard.kind=project"]}
+        all=True, filters={"label": [f"dockyard.project={project}", f"dockyard.kind={kind}"]}
     )
     return found
 
@@ -80,3 +85,37 @@ def test_the_projects_network_exists_once_dockyard_has_started(
 
     (network,) = docker_daemon.networks.list(names=["dockyard-projects"])
     assert network.attrs["Options"]["com.docker.network.bridge.enable_icc"] == "false"
+
+
+def test_the_git_credential_is_neither_in_the_metadata_nor_in_variables_nor_on_disk(
+    runtime: Runtime, new_user: Callable[[], str], docker_daemon: docker.DockerClient
+) -> None:
+    user = new_user()
+    project = new_project()
+    runtime.start_clone(user, project, PUBLIC_REPOSITORY, credential=GitToken("github.com", TOKEN))
+    finished(runtime, project)
+    clone = environment_of(docker_daemon, project, kind="clone")
+    assert TOKEN not in json.dumps(clone.attrs)
+    runtime.finish_clone(project)
+    runtime.start_project(user, project, name="Hello", permission_mode="default")
+    server_ready(runtime, project)
+
+    runtime.write_git_credential(project, GitToken("github.com", TOKEN))
+
+    environment = environment_of(docker_daemon, project)
+    assert TOKEN not in json.dumps(environment.attrs)
+    assert environment.attrs["HostConfig"]["Tmpfs"] == {
+        "/run/dockyard": "uid=1000,gid=1000,mode=0700,size=1m"
+    }
+    # Everywhere the non-root user can write, and so leave it: only the tmpfs holds it.
+    places = "/run/dockyard /workspace /home/ubuntu /tmp /var/tmp /dev/shm"
+    found = run(environment, f"grep -rlsF -- {TOKEN} {places}; true")
+    assert found.split() == ["/run/dockyard/gh/hosts.yml"]
+    assert TOKEN not in run(environment, "cat /proc/*/environ")
+
+
+def run(environment: Container, script: str) -> str:
+    """What `script` prints, run by the non-root user in the environment."""
+    exit_code, output = environment.exec_run(["bash", "-c", script], user="1000:1000")
+    assert exit_code == 0 and isinstance(output, bytes), output
+    return output.decode(errors="replace")

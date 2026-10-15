@@ -1,13 +1,14 @@
 """Git Credentials: the GitHub and GitLab tokens a User keeps in their profile.
 
-A token is encrypted with the Instance secret key as it is saved, and nothing here ever hands it
-back: a Git Credential is known by its label and provider only.
+A token is encrypted with the Instance secret key as it is saved, and only `token` hands it back,
+for the Projects that use it: to a User, a Git Credential is known by its label and provider only.
 """
 
 from __future__ import annotations
 
 import re
 import sqlite3
+from collections.abc import Sequence
 from dataclasses import dataclass
 from enum import StrEnum
 
@@ -35,6 +36,14 @@ class GitCredentialRefused(Exception):
     def __init__(self, reason: Refusal) -> None:
         self.reason = reason
         super().__init__(reason)
+
+
+class GitCredentialInUse(Exception):
+    """Projects use the Git Credential: it cannot be deleted until they are."""
+
+    def __init__(self, projects: list[str]) -> None:
+        self.projects = projects  # their names
+        super().__init__(projects)
 
 
 @dataclass(frozen=True)
@@ -103,13 +112,32 @@ class GitCredentials:
         return _credential(row) if row else None
 
     def delete(self, owner: User, credential: str) -> bool:
-        """False if not found."""
+        """False if not found.
+
+        Raises GitCredentialInUse.
+        """
         with self._db.transaction() as conn:
+            if using := _projects_using(conn, owner, credential):
+                raise GitCredentialInUse(using)
             deleted = conn.execute(
                 "DELETE FROM git_credentials WHERE owner = ? AND id = ?",
                 (owner.runtime_id, credential),
             )
         return deleted.rowcount > 0
+
+    def used_by(self, owner: User, credential: str) -> Sequence[str]:
+        """The names of the owner's Projects that use the Git Credential."""
+        with self._db.transaction() as conn:
+            return _projects_using(conn, owner, credential)
+
+    def token(self, credential: str) -> str | None:
+        """The Git Credential's token, for the Projects that use it: never for a response.
+        None if not found."""
+        with self._db.transaction() as conn:
+            row = conn.execute(
+                "SELECT token FROM git_credentials WHERE id = ?", (credential,)
+            ).fetchone()
+        return self._fernet.decrypt(row["token"]).decode() if row else None
 
     def _encrypt(self, token: str) -> bytes:
         return self._fernet.encrypt(token.encode())
@@ -134,6 +162,15 @@ def valid_token(token: str) -> str:
 
 
 _COLUMNS = "id, label, provider, created_at, updated_at"  # never the token
+
+
+def _projects_using(conn: sqlite3.Connection, owner: User, credential: str) -> list[str]:
+    rows = conn.execute(
+        "SELECT name FROM projects WHERE owner = ? AND git_credential = ?"
+        " ORDER BY created_at, rowid",
+        (owner.runtime_id, credential),
+    ).fetchall()
+    return [row["name"] for row in rows]
 
 
 def _credential(row: sqlite3.Row) -> GitCredential:

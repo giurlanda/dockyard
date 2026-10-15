@@ -42,8 +42,8 @@ def create_app(
     database.migrate()
     accounts = Accounts(database)
     accounts.bootstrap_first_administrator(settings.first_administrator_email)
-    projects = Projects(database, runtime)
     git_credentials = GitCredentials(database, settings.secret_key)
+    projects = Projects(database, runtime, git_credentials)
     try:
         projects.resume()
     except RuntimeUnavailable as error:
@@ -52,6 +52,7 @@ def create_app(
 
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
+        projects.keep_git_credentials()
         yield
         projects.close()
 
@@ -107,7 +108,7 @@ def create_app(
         return {"email": user.email, "role": user.role}
 
     app.include_router(claude_account_routes(runtime, projects, pages))
-    app.include_router(projects_routes(projects, pages))
+    app.include_router(projects_routes(projects, git_credentials, pages))
     app.include_router(git_credentials_routes(git_credentials, pages))
     app.mount("/static", StaticFiles(packages=[("dockyard.web", "static")]), name="static")
     return app

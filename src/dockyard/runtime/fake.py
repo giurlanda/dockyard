@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import queue
+import re
 import secrets
 import threading
 from collections.abc import Callable, Iterator, Sequence
@@ -19,6 +20,7 @@ from . import (
     TRUST_PROMPT,
     Clone,
     CloneState,
+    GitToken,
     LoginNotRunning,
     Output,
     ProjectMissing,
@@ -36,6 +38,11 @@ LAST_COMMIT = "Merge pull request #6 from Spaceghost/patch-1"
 USED_CPU = 0.5  # percent of one CPU
 USED_MEMORY = 200 * 1024**2  # bytes
 CTRL_C = "\x03"
+# `git credential fill` for a host, as the contract suite types it in a Terminal.
+GIT_CREDENTIAL_FILL = re.compile(
+    r"printf 'protocol=https\\nhost=(?P<host>[a-z.]+)\\n\\n' \| "
+    r"GIT_TERMINAL_PROMPT=0 git credential fill"
+)
 
 
 class FakeRuntime:
@@ -51,14 +58,16 @@ class FakeRuntime:
         self._logins: dict[str, _Login] = {}
         self._login_timeout = login_timeout
         self._reachable = True
-        self._repositories: set[str] = set()  # the public repositories that exist
+        # The repositories that exist: the token each needs, None for a public one.
+        self._repositories: dict[str, str | None] = {}
         self._projects: dict[str, _Project] = {}
         self._clones_paused = False
 
-    def publish_repository(self, url: str) -> None:
-        """From now on, `url` is a public repository that can be cloned."""
+    def publish_repository(self, url: str, *, token: str | None = None) -> None:
+        """From now on, `url` is a repository that can be cloned: a public one, or with `token`
+        a private one that only that token clones."""
         with self._lock:
-            self._repositories.add(url)
+            self._repositories[url] = token
 
     @contextmanager
     def clones_paused(self) -> Iterator[None]:
@@ -97,7 +106,13 @@ class FakeRuntime:
         with self._lock:
             found = self._projects[project]
             self._trusted.get(found.user, set()).discard(project_path(project))
-            server = found.server
+        self.exit_server(project)
+
+    def exit_server(self, project: str) -> None:
+        """The Project's Remote Control Server exits by itself once, as in a crash: its
+        environment starts again."""
+        with self._lock:
+            server = self._projects[project].server
         if server:
             server.exit()
 
@@ -161,27 +176,41 @@ class FakeRuntime:
         if login:
             login.end()
 
-    def start_clone(self, user: str, project: str, repository: str) -> None:
+    def start_clone(
+        self, user: str, project: str, repository: str, *, credential: GitToken | None = None
+    ) -> None:
         self.check_reachable()
+        token = credential.token if credential else None
         # What git prints when it clones, as the Runtime contract suite sees it.
         started = f"Cloning into '{project_path(project)}'...\n"
-        if repository in self._repositories:
+        with self._lock:
+            published = repository in self._repositories
+            needed = self._repositories.get(repository)
+        if published and needed in (None, token):
             outcome = Clone(
                 CloneState.SUCCEEDED,
                 started + "remote: Enumerating objects: 3, done.\n"
                 "Receiving objects: 100% (3/3), done.\n",
             )
-        else:
+        elif token is None:
             host = urlsplit(repository).hostname
             outcome = Clone(
                 CloneState.FAILED,
                 started + f"fatal: could not read Username for 'https://{host}': "
                 "terminal prompts disabled\n",
             )
+        else:
+            outcome = Clone(
+                CloneState.FAILED,
+                started + "remote: Invalid username or token. Password authentication is not "
+                "supported for Git operations.\n"
+                f"fatal: Authentication failed for '{repository}/'\n",
+            )
         with self._lock:
             running = Clone(CloneState.RUNNING, started)
             self._projects[project] = _Project(
                 user=user,
+                repository=repository,
                 code=True,
                 clone=running if self._clones_paused else outcome,
                 clone_outcome=outcome,
@@ -246,6 +275,23 @@ class FakeRuntime:
     def open_terminal(self, project: str) -> Tty:
         return self._running_server(project).open_shell(project_path(project))
 
+    def write_git_credential(self, project: str, credential: GitToken) -> None:
+        self.check_reachable()
+        with self._lock:
+            found = self._projects.get(project)
+            if not found or not found.server or found.crashed:
+                raise ProjectNotRunning(project)
+            found.git_token = credential
+
+    def project_starts(self) -> dict[str, str]:
+        self.check_reachable()
+        with self._lock:
+            return {
+                project: str(found.launches)
+                for project, found in self._projects.items()
+                if found.server and not found.crashed
+            }
+
     def project_stats(self, project: str) -> Stats | None:
         self.check_reachable()
         with self._lock:
@@ -304,15 +350,22 @@ class FakeRuntime:
             path = project_path(project)
             trusted = path in self._trusted.get(found.user, set())
             command = found.command
+            found.launches += 1
+            found.git_token = None  # its tmpfs starts empty
         server = _Server(
             [command, f"in {path}"],
             trusted=trusted,
             trust=lambda: self._trust(found.user, path),
             report=lambda: self._report(project),
             exited=lambda: self._restart(project, server),
+            git_token=lambda: self._git_token(project),
         )
         with self._lock:
             found.server = server
+
+    def _git_token(self, project: str) -> GitToken | None:
+        with self._lock:
+            return self._projects[project].git_token
 
     def _trust(self, user: str, path: str) -> None:
         with self._lock:
@@ -333,6 +386,7 @@ class FakeRuntime:
                 f"environment: {environment}",
                 f"starts: {found.starts}",
                 f"code: {LAST_COMMIT}",
+                f"remote: {found.repository}",
                 "user: 1000",
                 "capabilities: 0000000000000000",
                 "no new privileges: 1",
@@ -364,6 +418,7 @@ class FakeRuntime:
 @dataclass
 class _Project:
     user: str
+    repository: str
     code: bool  # its code volume exists
     clone: Clone | None
     clone_outcome: Clone = field(repr=False)  # how its clone ends
@@ -372,6 +427,8 @@ class _Project:
     crashed: bool = False  # its server keeps failing
     starts: int = 0  # how many times its server started, as counted in its home
     usage: tuple[float, int] = (USED_CPU, USED_MEMORY)
+    launches: int = 0  # how many times its environment started, by Dockyard or by itself
+    git_token: GitToken | None = None  # what its tmpfs holds, written since it last started
 
 
 class _Program:
@@ -503,11 +560,13 @@ class _Server(_Program):
         trust: Callable[[], None],
         report: Callable[[], list[str]],
         exited: Callable[[], None],
+        git_token: Callable[[], GitToken | None],
     ) -> None:
         super().__init__()
         self._trust = trust
         self._report = report
         self._exited = exited
+        self._git_token = git_token
         self._shells: list[_Shell] = []  # its environment's Terminals
         self.asking = not trusted
         self._lines(intro)
@@ -543,7 +602,7 @@ class _Server(_Program):
 
     def open_shell(self, path: str) -> _Watcher:
         """A Terminal in its environment."""
-        shell = _Shell(path)
+        shell = _Shell(path, self._git_token)
         watcher = shell.attach()
         with self._lock:
             if self._over:
@@ -578,9 +637,10 @@ class _Shell(_Program):
     """`bash -l` of the non-root user in a Project's path, as far as the contract suite types in
     it."""
 
-    def __init__(self, path: str) -> None:
+    def __init__(self, path: str, git_token: Callable[[], GitToken | None]) -> None:
         super().__init__()
         self._path = path
+        self._git_token = git_token  # what its environment's tmpfs holds
         self._sleeping = False  # it runs `sleep`, until interrupted
 
     def prompt(self) -> None:
@@ -617,9 +677,33 @@ class _Shell(_Program):
         elif command == "stty size":
             rows, cols = self._size
             self._print(f"{rows} {cols}\r\n")
+        elif command == "gh auth token --hostname github.com":
+            token = self._token_for("github.com")
+            self._print(f"{token}\r\n" if token else "no oauth token found for github.com\r\n")
+        elif command == "glab config get token --host gitlab.com":
+            self._print(f"{self._token_for('gitlab.com') or ''}\r\n")
+        elif (fill := GIT_CREDENTIAL_FILL.fullmatch(command)) is not None:
+            self._fill(fill["host"])
         elif command:
             self._print(f"bash: {command.split()[0]}: command not found\r\n")
         self.prompt()
+
+    def _token_for(self, host: str) -> str | None:
+        written = self._git_token()
+        return written.token if written and written.host == host else None
+
+    def _fill(self, host: str) -> None:
+        """`git credential fill`, asking its credential helper, never the terminal."""
+        token = self._token_for(host)
+        if token is None:
+            self._print(
+                f"fatal: could not read Username for 'https://{host}': "
+                "terminal prompts disabled\r\n"
+            )
+            return
+        username = "dockyard" if host == "github.com" else "glab"
+        for line in ("protocol=https", f"host={host}", f"username={username}", f"password={token}"):
+            self._print(f"{line}\r\n")
 
 
 class _Watcher:

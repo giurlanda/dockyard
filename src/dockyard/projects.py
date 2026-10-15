@@ -15,10 +15,12 @@ from urllib.parse import urlsplit
 
 from .accounts import User
 from .database import Database
+from .git_credentials import GitCredentials
 from .providers import Provider
 from .runtime import (
     Clone,
     CloneState,
+    GitToken,
     Output,
     ProjectMissing,
     ProjectNotRunning,
@@ -37,12 +39,18 @@ CLONE_OUTPUT_LINES = 40  # the end of what git printed: its progress, or why it 
 
 
 PROVIDERS = {"github.com": Provider.GITHUB, "gitlab.com": Provider.GITLAB}
+HOSTS = {provider: host for host, provider in PROVIDERS.items()}
+# Seconds between two looks for Project environments that started without Dockyard.
+GIT_CREDENTIALS_INTERVAL = 2.0
 # A path segment of a repository: an owner, a group or the repository itself (never "." or "..").
 SEGMENT = re.compile(r"^[A-Za-z0-9_][A-Za-z0-9_.-]*$")
 
 
 class Visibility(StrEnum):
+    """A private Project needs a Git Credential; a public one may have one."""
+
     PUBLIC = "public"
+    PRIVATE = "private"
 
 
 class PermissionMode(StrEnum):
@@ -85,6 +93,9 @@ class Refusal(StrEnum):
     REPOSITORY_HOST = "repository_host"
     NAME_MISSING = "name_missing"
     NAME_INVALID = "name_invalid"
+    GIT_CREDENTIAL_REQUIRED = "git_credential_required"
+    GIT_CREDENTIAL_NOT_FOUND = "git_credential_not_found"
+    GIT_CREDENTIAL_PROVIDER = "git_credential_provider"
     CLONING = "cloning"
     NOT_RUNNING = "not_running"
 
@@ -102,7 +113,7 @@ class Repository:
 
 
 def parse_repository(text: str) -> Repository:
-    """A public repository on github.com or gitlab.com, by its plain https URL.
+    """A repository on github.com or gitlab.com, by its plain https URL.
 
     Raises ProjectRefused.
     """
@@ -152,6 +163,7 @@ class Project:
     visibility: Visibility
     permission_mode: PermissionMode
     status: Status
+    git_credential: str | None = None  # its id
 
 
 @dataclass(frozen=True)
@@ -161,20 +173,31 @@ class CloneReport:
     owner: str  # the owner's runtime id
     name: str
     repository: str
-    state: CloneState
-    output: str
+    visibility: Visibility
+    git_credential: str | None
+    state: CloneState = CloneState.RUNNING
+    output: str = ""
 
 
 class Projects:
     def __init__(
-        self, database: Database, runtime: Runtime, *, poll_interval: float = CLONE_POLL_INTERVAL
+        self,
+        database: Database,
+        runtime: Runtime,
+        git_credentials: GitCredentials,
+        *,
+        poll_interval: float = CLONE_POLL_INTERVAL,
     ) -> None:
         self._db = database
         self._runtime = runtime
+        self._git_credentials = git_credentials
         self._poll_interval = poll_interval
         self._lock = threading.Lock()
         self._clones: dict[str, CloneReport] = {}  # since Dockyard started
         self._deleting: set[str] = set()
+        # The start of each Project's environment its Git Credential was last written into.
+        self._written: dict[str, str] = {}
+        self._writing = threading.Lock()
         self._closed = threading.Event()
 
     def create(
@@ -185,25 +208,44 @@ class Projects:
         repository: str,
         visibility: Visibility,
         permission_mode: PermissionMode = PermissionMode.DEFAULT,
+        git_credential: str | None = None,
     ) -> Project:
-        """Record the Project and start cloning it; once cloned, it starts (or waits for its
-        owner's Claude Account). Raises ProjectRefused, RuntimeUnavailable."""
+        """Record the Project and start cloning it, with its Git Credential if it has one; once
+        cloned, it starts (or waits for its owner's Claude Account).
+
+        Raises ProjectRefused, RuntimeUnavailable.
+        """
         name = valid_name(name)
         source = parse_repository(repository)
-        with self._db.transaction() as conn:
-            (project,) = conn.execute(
-                "INSERT INTO projects (owner, name, repository, provider, visibility,"
-                " permission_mode) VALUES (?, ?, ?, ?, ?, ?) RETURNING id",
-                (owner.runtime_id, name, source.url, source.provider, visibility, permission_mode),
-            ).fetchone()
+        self._check_git_credential(owner, git_credential, visibility, source.provider)
         try:
-            self._runtime.start_clone(owner.runtime_id, project, source.url)
+            with self._db.transaction() as conn:
+                (project,) = conn.execute(
+                    "INSERT INTO projects (owner, name, repository, provider, visibility,"
+                    " permission_mode, git_credential) VALUES (?, ?, ?, ?, ?, ?, ?) RETURNING id",
+                    (
+                        owner.runtime_id,
+                        name,
+                        source.url,
+                        source.provider,
+                        visibility,
+                        permission_mode,
+                        git_credential,
+                    ),
+                ).fetchone()
+        except sqlite3.IntegrityError as error:  # its Git Credential was deleted meanwhile
+            raise ProjectRefused(Refusal.GIT_CREDENTIAL_NOT_FOUND) from error
+        credential = self._git_token(git_credential, source.provider)
+        try:
+            self._runtime.start_clone(owner.runtime_id, project, source.url, credential=credential)
         except RuntimeUnavailable:
             with suppress(RuntimeUnavailable):  # leave nothing behind, as far as Docker lets us
                 self._runtime.remove_project(project, code=True)
             self._forget(project)
             raise
-        self._follow(project, owner=owner.runtime_id, name=name, repository=source.url)
+        self._follow(
+            project, CloneReport(owner.runtime_id, name, source.url, visibility, git_credential)
+        )
         return Project(
             project,
             name,
@@ -212,6 +254,7 @@ class Projects:
             visibility,
             permission_mode,
             Status.CLONING,
+            git_credential,
         )
 
     def list(self, owner: User) -> list[Project]:
@@ -289,8 +332,16 @@ class Projects:
         """Once the owner's sign-in ends, start their Projects waiting for their Claude Account."""
         self._follow_sign_in_in_background(owner.runtime_id)
 
+    def keep_git_credentials(self) -> None:
+        """Until close: hand their Git Credential to the Projects whose environment started
+        without Dockyard, such as after their server crashed or Docker restarted, when it lost
+        what was written at the previous start."""
+        threading.Thread(
+            target=self._keep_git_credentials, name="git-credentials", daemon=True
+        ).start()
+
     def close(self) -> None:
-        """Dockyard is stopping: stop following sign-ins."""
+        """Dockyard is stopping: stop following sign-ins and keeping Git Credentials."""
         self._closed.set()
 
     def clone(self, owner: User, project: str) -> CloneReport | None:
@@ -311,6 +362,7 @@ class Projects:
             self._forget(project)
             with self._lock:
                 self._clones.pop(project, None)
+                self._written.pop(project, None)
         finally:
             with self._lock:
                 self._deleting.discard(project)
@@ -320,20 +372,47 @@ class Projects:
         """Pick up what was in progress when Dockyard stopped: clones, and Projects waiting for
         a Claude Account (connected meanwhile, or with a sign-in in progress)."""
         with self._db.transaction() as conn:
-            rows = conn.execute("SELECT id, owner, name, repository FROM projects").fetchall()
+            rows = conn.execute(f"SELECT {_COLUMNS}, owner FROM projects").fetchall()
             waiting = conn.execute(
                 "SELECT DISTINCT owner FROM projects WHERE should_run = 1"
             ).fetchall()
         for row in rows:
             if self._runtime.project_status(row["id"]) == ProjectStatus.CLONING:
                 self._follow(
-                    row["id"], owner=row["owner"], name=row["name"], repository=row["repository"]
+                    row["id"],
+                    CloneReport(
+                        row["owner"],
+                        row["name"],
+                        row["repository"],
+                        Visibility(row["visibility"]),
+                        row["git_credential"],
+                    ),
                 )
         for (owner,) in waiting:
             if self._runtime.login_environment_running(owner):
                 self._follow_sign_in_in_background(owner)
             else:
                 self._start_waiting(owner)
+
+    def _check_git_credential(
+        self, owner: User, credential: str | None, visibility: Visibility, provider: Provider
+    ) -> None:
+        """A private Project needs a Git Credential; any Project takes only one of its owner's,
+        of its repository's provider. Raises ProjectRefused."""
+        if credential is None:
+            if visibility == Visibility.PRIVATE:
+                raise ProjectRefused(Refusal.GIT_CREDENTIAL_REQUIRED)
+            return
+        found = self._git_credentials.get(owner, credential)
+        if found is None:
+            raise ProjectRefused(Refusal.GIT_CREDENTIAL_NOT_FOUND)
+        if found.provider != provider:
+            raise ProjectRefused(Refusal.GIT_CREDENTIAL_PROVIDER)
+
+    def _git_token(self, credential: str | None, provider: Provider) -> GitToken | None:
+        """The Git Credential's token, for the host of the provider it was checked against."""
+        token = self._git_credentials.token(credential) if credential else None
+        return GitToken(HOSTS[provider], token) if token else None
 
     def _while_running[T: Output](
         self, owner: User, project: str, opening: Callable[[str], T]
@@ -359,7 +438,50 @@ class Projects:
                     name=row["name"],
                     permission_mode=row["permission_mode"],
                 )
+                if row["git_credential"]:
+                    start = self._runtime.project_starts().get(row["id"])
+                    self._write_git_credential(row, start)
         self._should_run(row["id"], True)
+
+    def _keep_git_credentials(self) -> None:
+        while not self._closed.wait(GIT_CREDENTIALS_INTERVAL):
+            try:
+                starts = self._runtime.project_starts()
+                with self._db.transaction() as conn:
+                    rows = conn.execute(
+                        "SELECT id, provider, git_credential FROM projects"
+                        " WHERE git_credential IS NOT NULL"
+                    ).fetchall()
+                for row in rows:
+                    if (start := starts.get(row["id"])) is not None:
+                        self._write_git_credential(row, start)
+            except RuntimeUnavailable as error:
+                log.warning("Cannot hand Projects their Git Credential: %s", error)
+            except Exception:  # never the end of it: Projects would lose theirs at the next crash
+                log.exception("Cannot hand Projects their Git Credential")
+
+    def _write_git_credential(self, row: sqlite3.Row, start: str | None) -> None:
+        """Write the Project's Git Credential into its environment, as of its `start`, unless
+        it is there already: written again by _keep_git_credentials if it failed, or if the
+        environment starts again. One write at a time: each replaces what the last wrote."""
+        if start is None:
+            return
+        with self._writing:
+            with self._lock:
+                if self._written.get(row["id"]) == start:
+                    return
+            credential = self._git_token(row["git_credential"], Provider(row["provider"]))
+            if credential is None:
+                return
+            try:
+                self._runtime.write_git_credential(row["id"], credential)
+            except ProjectNotRunning:
+                return  # its server stopped meanwhile: written when it starts again
+            except RuntimeUnavailable as error:
+                log.warning("Cannot hand Project %s its Git Credential: %s", row["id"], error)
+                return
+            with self._lock:
+                self._written[row["id"]] = start
 
     def _start_waiting(self, owner: str) -> None:
         """Start the owner's Projects that wait for their Claude Account, if it is connected."""
@@ -390,9 +512,9 @@ class Projects:
             except RuntimeUnavailable as error:
                 log.warning("Cannot follow the sign-in of %s: %s", owner, error)
 
-    def _follow(self, project: str, *, owner: str, name: str, repository: str) -> None:
+    def _follow(self, project: str, report: CloneReport) -> None:
         with self._lock:
-            self._clones[project] = CloneReport(owner, name, repository, CloneState.RUNNING, "")
+            self._clones[project] = report
         threading.Thread(
             target=self._follow_clone, args=(project,), name=f"clone-{project}", daemon=True
         ).start()
@@ -481,10 +603,11 @@ class Projects:
             visibility=Visibility(row["visibility"]),
             permission_mode=PermissionMode(row["permission_mode"]),
             status=status,
+            git_credential=row["git_credential"],
         )
 
 
-_COLUMNS = "id, name, repository, provider, visibility, permission_mode, should_run"
+_COLUMNS = "id, name, repository, provider, visibility, permission_mode, should_run, git_credential"
 
 
 def _readable(output: str) -> str:

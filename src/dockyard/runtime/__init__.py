@@ -7,7 +7,7 @@ the same behaviour.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from enum import StrEnum
 from typing import Protocol
 
@@ -68,6 +68,14 @@ class ProjectStatus(StrEnum):
     FAILED = "failed"  # its environment is there, its Remote Control Server is not running
     STOPPED = "stopped"  # its code is there, nothing runs
     MISSING = "missing"  # nothing is there
+
+
+@dataclass(frozen=True)
+class GitToken:
+    """A Git Credential's token, for the host it works on: github.com or gitlab.com."""
+
+    host: str
+    token: str = field(repr=False)
 
 
 @dataclass(frozen=True)
@@ -136,9 +144,13 @@ class Runtime(Protocol):
 
     def stop_login_environment(self, user: str) -> None: ...
 
-    def start_clone(self, user: str, project: str, repository: str) -> None:
+    def start_clone(
+        self, user: str, project: str, repository: str, *, credential: GitToken | None = None
+    ) -> None:
         """Give the Project its own code volume, owned by the non-root user, and start cloning
-        the public `repository` into project_path(project), as the non-root user.
+        `repository` into project_path(project), as the non-root user: with the Git
+        `credential` of its host when the repository asks for one. Its token is kept nowhere:
+        not in the repository, not in the clone's metadata.
 
         The clone stays (see `clone`) until `finish_clone` or `remove_project`; it is given up
         after CLONE_TIMEOUT.
@@ -201,6 +213,23 @@ class Runtime(Protocol):
 
         Raises ProjectNotRunning when the Remote Control Server is not running.
         """
+        ...
+
+    def write_git_credential(self, project: str, credential: GitToken) -> None:
+        """Hand a Git Credential to the Project's running environment, replacing any written
+        before: gh or glab find it in their configuration, and git gets it from them as its
+        credential helper for the credential's host.
+
+        It is written into memory only (a tmpfs, emptied at every start of the environment):
+        never into the environment's metadata or variables, never on disk.
+
+        Raises ProjectNotRunning when the Project has no environment running.
+        """
+        ...
+
+    def project_starts(self) -> dict[str, str]:
+        """For each Project whose environment runs, its start: a value that changes every time
+        the environment starts, by start_project or by itself after its server exited."""
         ...
 
     def project_stats(self, project: str) -> Stats | None:

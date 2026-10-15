@@ -254,6 +254,28 @@ def lose_trust(request: pytest.FixtureRequest) -> LoseTrust:
     return lose
 
 
+@pytest.fixture
+def exit_by_itself(request: pytest.FixtureRequest) -> Callable[[Runtime, str], None]:
+    """The Project's Remote Control Server exits by itself, as in a crash: Docker starts its
+    environment again."""
+    if request.node.callspec.params["make_runtime"] == "fake":
+
+        def exit_in_fake(runtime: Runtime, project: str) -> None:
+            assert isinstance(runtime, FakeRuntime)
+            runtime.exit_server(project)
+
+        return exit_in_fake
+    daemon: docker.DockerClient = request.getfixturevalue("docker_daemon")
+
+    def exit_server(runtime: Runtime, project: str) -> None:
+        labels = [f"dockyard.project={project}", "dockyard.kind=project"]
+        (environment,) = daemon.containers.list(filters={"label": labels})
+        exit_code, output = environment.exec_run(["pkill", "-f", "sleep infinity"])
+        assert exit_code == 0, output
+
+    return exit_server
+
+
 TerminalProcesses = Callable[[Runtime, str], int]
 
 

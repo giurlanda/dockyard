@@ -10,6 +10,15 @@
     </div>
     <p>{{ t("project.repository") }}:
       <a href="{{ project.repository }}" target="_blank" rel="noopener noreferrer">{{ project.repository }}</a></p>
+    <p>{{ t("project_new.visibility") }}: {{ t("project_new." ~ project.visibility) }}</p>
+    <p>{{ t("project_new.git_credential") }}:
+      {% if git_credential %}
+        <a href="/git-credentials/{{ git_credential.id }}">{{ git_credential.label }}</a>
+        <span class="badge">{{ t("provider." ~ git_credential.provider) }}</span>
+      {% else %}
+        {{ t("project_new.no_git_credential") }}
+      {% endif %}</p>
+    {% if git_credential %}<p class="hint muted">{{ t("project.git_credential_inside") }}</p>{% endif %}
     <p>{{ t("project.permission_mode") }}: {{ t("permission_mode." ~ project.permission_mode) }}</p>
     {% if project.permission_mode == "bypassPermissions" %}
       <p class="warning">{{ t("permission_mode.bypass_warning") }}</p>

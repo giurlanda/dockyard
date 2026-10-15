@@ -63,6 +63,7 @@ remote_control() {
   echo "$starts" > ~/.stand-in-starts
   echo "starts: $starts"
   echo "code: $(git log -1 --format=%s 2>&1)"
+  echo "remote: $(git remote get-url origin 2>&1)"
   echo "user: $(id -u)"
   echo "capabilities: $(awk '/^CapEff/ {print $2}' /proc/self/status)"
   echo "no new privileges: $(awk '/^NoNewPrivs/ {print $2}' /proc/self/status)"

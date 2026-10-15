@@ -18,6 +18,7 @@ from pydantic import BaseModel
 from starlette.responses import Response
 
 from ..accounts import User
+from ..git_credentials import GitCredentials
 from ..projects import (
     CloneReport,
     PermissionMode,
@@ -27,6 +28,7 @@ from ..projects import (
     Refusal,
     Visibility,
 )
+from ..providers import Provider
 from ..runtime import CloneState, Output, RuntimeUnavailable
 from .guard import CurrentUser, websocket_close_code
 from .pages import Pages
@@ -42,6 +44,7 @@ class NewProject(BaseModel):
     repository: str
     visibility: Visibility
     permission_mode: PermissionMode = PermissionMode.DEFAULT
+    git_credential: str | None = None  # the id of one of the User's Git Credentials
 
 
 class ProjectOut(BaseModel):
@@ -52,6 +55,7 @@ class ProjectOut(BaseModel):
     visibility: str
     permission_mode: str
     status: str
+    git_credential: str | None
 
     @classmethod
     def of(cls, project: Project) -> ProjectOut:
@@ -63,6 +67,7 @@ class ProjectOut(BaseModel):
             visibility=project.visibility,
             permission_mode=project.permission_mode,
             status=project.status,
+            git_credential=project.git_credential,
         )
 
 
@@ -78,7 +83,7 @@ class StatsOut(BaseModel):
     memory_limit: int  # bytes
 
 
-def projects_routes(projects: Projects, pages: Pages) -> APIRouter:
+def projects_routes(projects: Projects, git_credentials: GitCredentials, pages: Pages) -> APIRouter:
     router = APIRouter()
 
     def refused(request: Request, refusal: ProjectRefused) -> Response:
@@ -96,6 +101,8 @@ def projects_routes(projects: Projects, pages: Pages) -> APIRouter:
         *,
         name: str,
         repository: str,
+        visibility: Visibility = Visibility.PUBLIC,
+        git_credential: str = "",
         permission_mode: PermissionMode = PermissionMode.DEFAULT,
         problem: str | None = None,
         status_code: int = 200,
@@ -107,6 +114,11 @@ def projects_routes(projects: Projects, pages: Pages) -> APIRouter:
             user=user,
             name=name,
             repository=repository,
+            visibilities=list(Visibility),
+            visibility=visibility,
+            providers=list(Provider),
+            git_credentials=git_credentials.list(user),
+            git_credential=git_credential,
             permission_modes=list(PermissionMode),
             permission_mode=permission_mode,
             problem=problem,
@@ -132,6 +144,7 @@ def projects_routes(projects: Projects, pages: Pages) -> APIRouter:
                 repository=new.repository,
                 visibility=new.visibility,
                 permission_mode=new.permission_mode,
+                git_credential=new.git_credential,
             )
         except ProjectRefused as refusal:
             return refused(request, refusal)
@@ -192,9 +205,21 @@ def projects_routes(projects: Projects, pages: Pages) -> APIRouter:
 
     @router.get("/projects/new", response_class=HTMLResponse)
     def new_project_form(
-        request: Request, user: CurrentUser, name: str = "", repository: str = ""
+        request: Request,
+        user: CurrentUser,
+        name: str = "",
+        repository: str = "",
+        visibility: Visibility = Visibility.PUBLIC,
+        git_credential: str = "",
     ) -> HTMLResponse:
-        return new_project_page(request, user, name=name, repository=repository)
+        return new_project_page(
+            request,
+            user,
+            name=name,
+            repository=repository,
+            visibility=visibility,
+            git_credential=git_credential,
+        )
 
     @router.post("/projects", response_model=None)
     def create_from_form(
@@ -203,6 +228,7 @@ def projects_routes(projects: Projects, pages: Pages) -> APIRouter:
         name: Annotated[str, Form()] = "",
         repository: Annotated[str, Form()] = "",
         visibility: Annotated[Visibility, Form()] = Visibility.PUBLIC,
+        git_credential: Annotated[str, Form()] = "",  # "": none
         permission_mode: Annotated[PermissionMode, Form()] = PermissionMode.DEFAULT,
     ) -> Response:
         try:
@@ -212,6 +238,7 @@ def projects_routes(projects: Projects, pages: Pages) -> APIRouter:
                 repository=repository,
                 visibility=visibility,
                 permission_mode=permission_mode,
+                git_credential=git_credential or None,
             )
         except ProjectRefused as refusal:
             return new_project_page(
@@ -219,6 +246,8 @@ def projects_routes(projects: Projects, pages: Pages) -> APIRouter:
                 user,
                 name=name,
                 repository=repository,
+                visibility=visibility,
+                git_credential=git_credential,
                 permission_mode=permission_mode,
                 problem=f"project_refused.{refusal.reason}.body",
                 status_code=422,
@@ -230,7 +259,17 @@ def projects_routes(projects: Projects, pages: Pages) -> APIRouter:
         found = projects.get(user, project)
         report = projects.clone(user, project)
         if found is not None:
-            return pages.render(request, "project.html", user=user, project=found, clone=report)
+            credential = (
+                git_credentials.get(user, found.git_credential) if found.git_credential else None
+            )
+            return pages.render(
+                request,
+                "project.html",
+                user=user,
+                project=found,
+                clone=report,
+                git_credential=credential,
+            )
         if report is not None and report.state == CloneState.FAILED:
             return pages.render(
                 request, "clone_failed.html", user=user, report=report, retry=_retry(report)
@@ -295,4 +334,10 @@ async def opened[T: Output](websocket: WebSocket, opening: Callable[[], T | None
 
 def _retry(report: CloneReport) -> str:
     """The new Project form, filled in as it was for the clone that failed."""
-    return "/projects/new?" + urlencode({"name": report.name, "repository": report.repository})
+    filled = {
+        "name": report.name,
+        "repository": report.repository,
+        "visibility": report.visibility,
+        "git_credential": report.git_credential or "",
+    }
+    return "/projects/new?" + urlencode(filled)

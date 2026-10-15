@@ -19,14 +19,39 @@
                aria-describedby="name-hint" required>
         <p class="hint muted" id="name-hint">{{ t("project_new.name_hint") }}</p>
       </div>
-      <fieldset class="field">
+      <fieldset class="field visibilities">
         <legend>{{ t("project_new.visibility") }}</legend>
-        <label class="check">
-          <input type="radio" name="visibility" value="public" checked aria-describedby="public-hint">
-          {{ t("project_new.public") }}
-        </label>
-        <p class="hint muted" id="public-hint">{{ t("project_new.public_hint") }}</p>
+        {% for choice in visibilities %}
+          <label class="check">
+            <input type="radio" name="visibility" value="{{ choice }}"{{ " checked" if choice == visibility }}
+                   aria-describedby="{{ choice }}-hint">
+            {{ t("project_new." ~ choice) }}
+          </label>
+          <p class="hint muted" id="{{ choice }}-hint">{{ t("project_new." ~ choice ~ "_hint") }}</p>
+        {% endfor %}
       </fieldset>
+      <div class="field">
+        <label for="git_credential">{{ t("project_new.git_credential") }}</label>
+        <select id="git_credential" name="git_credential" aria-describedby="git-credential-hint">
+          <option value="">{{ t("project_new.no_git_credential") }}</option>
+          {% for provider in providers %}
+            {% set offered = git_credentials | selectattr("provider", "equalto", provider) | list %}
+            {% if offered %}
+              <optgroup label="{{ t('provider.' ~ provider) }}" data-provider="{{ provider }}">
+                {% for credential in offered %}
+                  <option value="{{ credential.id }}"{{ " selected" if credential.id == git_credential }}>{{ credential.label }}</option>
+                {% endfor %}
+              </optgroup>
+            {% endif %}
+          {% endfor %}
+        </select>
+        <p class="hint muted" id="git-credential-hint">{{ t("project_new.git_credential_hint") }}</p>
+        {% if not git_credentials %}
+          <p class="hint">{{ t("project_new.no_git_credentials") }}
+            <a href="/git-credentials/new">{{ t("git_credentials.add") }}</a></p>
+        {% endif %}
+        {% with provider=None %}{% include "_git_credential_risk.html" %}{% endwith %}
+      </div>
       <fieldset class="field modes" aria-describedby="mode-hint">
         <legend>{{ t("project_new.permission_mode") }}</legend>
         <p class="hint muted" id="mode-hint">{{ t("project_new.permission_mode_hint") }}</p>
@@ -47,3 +72,4 @@
     </form>
   </section>
 {% endblock %}
+{% block scripts %}<script src="/static/project_new.js"></script>{% endblock %}

@@ -8,7 +8,7 @@ import secrets
 import socket
 import threading
 import time
-from collections.abc import Iterator, Sequence
+from collections.abc import Callable, Iterator, Sequence
 from contextlib import contextmanager, suppress
 from typing import Any
 
@@ -29,6 +29,7 @@ from . import (
     TRUST_PROMPT,
     Clone,
     CloneState,
+    GitToken,
     LoginNotRunning,
     ProjectMissing,
     ProjectNotRunning,
@@ -71,6 +72,58 @@ TERMINAL_SCRIPT = 'cd -- "$1" && exec -a "$2" bash -l'
 # Hangs up the Terminal named $1: its shell leads a session of its own, and what it runs is in it.
 # Docker leaves the shell running when the connection to it closes.
 HANG_UP_SCRIPT = 'for shell in $(pgrep -f -x -- "$1 -l"); do pkill -HUP -s "$shell"; done'
+# Clones the repository $1 into $2. With a Git Credential (the git user name for its host in
+# $3), its token comes first on stdin and reaches git through a credential helper that reads it
+# from this script's environment: never in a URL, never stored in the repository.
+CLONE_SCRIPT = f"""
+set -eu
+helpers=(-c credential.helper=)
+if [ -n "$3" ]; then
+  if ! IFS= read -r -t 60 DOCKYARD_TOKEN; then
+    echo "fatal: the Git Credential did not arrive" >&2
+    exit 1
+  fi
+  export DOCKYARD_TOKEN DOCKYARD_USERNAME="$3"
+  helpers+=(-c 'credential.helper=!f() {{
+    echo "username=$DOCKYARD_USERNAME"; echo "password=$DOCKYARD_TOKEN"; }}; f')
+fi
+exec timeout {CLONE_TIMEOUT} git "${{helpers[@]}}" clone --progress -- "$1" "$2"
+"""
+CLONE_USERNAMES = {"github.com": "x-access-token", "gitlab.com": "oauth2"}
+# Where a Project's Git Credential lives: a tmpfs, emptied at every start of its environment.
+SECRETS = "/run/dockyard"
+SECRETS_TMPFS = f"uid={UID},gid={UID},mode=0700,size=1m"
+GH_CONFIG_DIR = f"{SECRETS}/gh"
+GLAB_CONFIG_DIR = f"{SECRETS}/glab"
+# Writes the token read on stdin as the Git Credential for the host $1, in the shapes gh and glab
+# read (validated in Phase 0), then makes them git's credential helpers for that host. Whatever
+# was written before goes first.
+WRITE_GIT_CREDENTIAL_SCRIPT = """
+set -eu
+IFS= read -r token
+umask 077
+rm -rf -- "$GH_CONFIG_DIR" "$GLAB_CONFIG_DIR"
+case "$1" in
+  github.com)
+    mkdir -p "$GH_CONFIG_DIR"
+    printf 'github.com:\\n    oauth_token: %s\\n    git_protocol: https\\n    user: dockyard\\n' \\
+        "$token" > "$GH_CONFIG_DIR/hosts.yml"
+    gh auth setup-git --hostname github.com
+    ;;
+  gitlab.com)
+    mkdir -p "$GLAB_CONFIG_DIR"
+    printf '%s\\n' 'check_update: false' 'hosts:' '    gitlab.com:' "        token: $token" \\
+        '        api_host: gitlab.com' '        git_protocol: https' \\
+        > "$GLAB_CONFIG_DIR/config.yml"
+    git config --global --unset-all credential.https://gitlab.com.helper || true
+    git config --global --add credential.https://gitlab.com.helper ''
+    git config --global --add credential.https://gitlab.com.helper '!glab auth git-credential'
+    ;;
+  *) echo "Unknown host: $1" >&2; exit 2 ;;
+esac
+"""
+WRITE_TIMEOUT = 30  # seconds
+WRITE_INTERVAL = 0.05  # seconds between two looks at a write in progress
 HANG_UP_ATTEMPTS = 20
 HANG_UP_INTERVAL = 0.25  # seconds
 # How far back a Project's log is searched for a trust prompt still waiting: nothing is printed
@@ -187,9 +240,12 @@ class DockerRuntime:
                     if "already in progress" not in str(error):  # its program ended: auto-removed
                         raise
 
-    def start_clone(self, user: str, project: str, repository: str) -> None:
+    def start_clone(
+        self, user: str, project: str, repository: str, *, credential: GitToken | None = None
+    ) -> None:
         path = project_path(project)
         labels = {**_labels(CLONE, user), PROJECT_LABEL: project}
+        username = CLONE_USERNAMES[credential.host] if credential else ""
         with self._docker():
             code = self._client.volumes.create(
                 _code_volume(project), labels={**_labels("code", user), PROJECT_LABEL: project}
@@ -197,28 +253,26 @@ class DockerRuntime:
             self._hand_to_non_root_user(code, labels={**labels, KIND_LABEL: "code-chown"})
             clone = self._client.containers.create(
                 self._base_image,
-                [
-                    "timeout",
-                    f"{CLONE_TIMEOUT}",
-                    "git",
-                    "clone",
-                    "--progress",
-                    "--",
-                    repository,
-                    path,
-                ],
+                ["bash", "-c", CLONE_SCRIPT, "clone", repository, path, username],
                 name=f"dockyard-{CLONE}-{project}",
                 volumes={code: {"bind": path, "mode": "rw"}},
                 working_dir=WORKSPACE,
                 # A repository that is not public asks for a user name: fail instead of waiting.
                 environment={"GIT_TERMINAL_PROMPT": "0"},
                 labels=labels,
+                stdin_open=credential is not None,  # where its token arrives
                 init=True,
                 mem_limit="1g",
                 nano_cpus=1_000_000_000,
                 **HARDENING,
             )
             clone.start()
+            if credential is not None:
+                stdin = self._client.api.attach_socket(
+                    str(clone.id), params={"stdin": 1, "stream": 1}
+                )
+                with _sending(stdin) as send:
+                    send(credential.token)
 
     def clone(self, project: str) -> Clone | None:
         with self._docker():
@@ -265,7 +319,13 @@ class DockerRuntime:
                     claude_config: {"bind": CLAUDE_CONFIG_DIR, "mode": "rw"},
                 },
                 working_dir=WORKSPACE,
-                environment={"TERM": "xterm-256color"},
+                # Where gh and glab look for the Git Credential: see write_git_credential.
+                tmpfs={SECRETS: SECRETS_TMPFS},
+                environment={
+                    "TERM": "xterm-256color",
+                    "GH_CONFIG_DIR": GH_CONFIG_DIR,
+                    "GLAB_CONFIG_DIR": GLAB_CONFIG_DIR,
+                },
                 labels={**_labels(PROJECT_ENVIRONMENT, user), PROJECT_LABEL: project},
                 # The console answers the Remote Control Server's prompts: a TTY, stdin kept open.
                 tty=True,
@@ -329,6 +389,44 @@ class DockerRuntime:
                 return Terminal(self._client.api, environment, str(shell["Id"]), name)
             except (NotFound, APIError) as error:  # it stopped or restarts meanwhile
                 raise ProjectNotRunning(project) from error
+
+    def write_git_credential(self, project: str, credential: GitToken) -> None:
+        with self._docker():
+            environment = str(self._running_environment(project).id)
+            try:
+                writer = self._client.api.exec_create(
+                    environment,
+                    ["bash", "-c", WRITE_GIT_CREDENTIAL_SCRIPT, "git-credential", credential.host],
+                    stdin=True,
+                    user=f"{UID}:{UID}",
+                )
+                writing = str(writer["Id"])
+                # On stdin: an exec's command and environment are in Docker's metadata.
+                stdin = self._client.api.exec_start(writing, socket=True)
+            except (NotFound, APIError) as error:  # it stopped or restarts meanwhile
+                raise ProjectNotRunning(project) from error
+            with _sending(stdin) as send:  # open until it ends: it may print
+                send(credential.token)
+                deadline = time.monotonic() + WRITE_TIMEOUT
+                while (written := self._client.api.exec_inspect(writing))["Running"]:
+                    if time.monotonic() > deadline:
+                        raise RuntimeUnavailable(f"Writing the Git Credential of {project} hangs")
+                    time.sleep(WRITE_INTERVAL)
+            if written["ExitCode"] != 0:
+                raise RuntimeUnavailable(
+                    f"Could not write the Git Credential of {project}: "
+                    f"the writer exited with {written['ExitCode']}"
+                )
+
+    def project_starts(self) -> dict[str, str]:
+        with self._docker():
+            environments = self._client.containers.list(
+                filters={"label": f"{KIND_LABEL}={PROJECT_ENVIRONMENT}", "status": "running"}
+            )
+            return {
+                environment.labels[PROJECT_LABEL]: environment.attrs["State"]["StartedAt"]
+                for environment in environments
+            }
 
     def project_stats(self, project: str) -> Stats | None:
         with self._docker():
@@ -638,6 +736,16 @@ class FollowedLog:
         """Only shuts the connection down: the reader lets go of the response once it sees that."""
         with suppress(OSError, DockerException):
             self._stream.close()
+
+
+@contextmanager
+def _sending(stream: Any) -> Iterator[Callable[[str], None]]:
+    """Sends lines to a program's stdin, through a connection Docker hijacked; closes it after."""
+    try:
+        yield lambda line: stream._sock.sendall(f"{line}\n".encode())
+    finally:
+        stream._sock.close()
+        stream._response.close()
 
 
 def _read_ahead(response: Any, sock: socket.socket) -> bytes:

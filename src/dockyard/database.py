@@ -66,6 +66,12 @@ MIGRATIONS = (
     );
     CREATE INDEX git_credentials_owner ON git_credentials (owner);
     """,
+    # git_credential: the Git Credential the Project clones with and hands to Claude; required
+    # for a private Project. A Git Credential cannot be deleted while a Project uses it.
+    """
+    ALTER TABLE projects ADD COLUMN git_credential TEXT REFERENCES git_credentials (id);
+    CREATE INDEX projects_git_credential ON projects (git_credential);
+    """,
 )
 
 
