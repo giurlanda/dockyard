@@ -44,17 +44,21 @@ class InvitationOut(BaseModel):
         return cls(email=invitation.email, created_at=invitation.created_at)
 
 
-class RoleChange(BaseModel):
-    role: Role
+class UserChange(BaseModel):
+    """What an Administrator changes about a User: what is not given stays as it is."""
+
+    role: Role | None = None
+    privileged_projects: bool | None = None
 
 
 class UserOut(BaseModel):
     email: str
     role: Role
+    privileged_projects: bool
 
     @classmethod
     def of(cls, user: User) -> UserOut:
-        return cls(email=user.email, role=user.role)
+        return cls(email=user.email, role=user.role, privileged_projects=user.privileged_projects)
 
 
 def users_routes(
@@ -73,6 +77,14 @@ def users_routes(
             return False
         projects.remove_owner(removed)
         return True
+
+    def permit(email: str, permitted: bool) -> User | None:
+        """Grant or revoke the User's permission to create Privileged Projects; revoking stops
+        their Privileged Projects. None if there is no such User."""
+        changed = accounts.permit_privileged_projects(email, permitted)
+        if changed is not None and not permitted:
+            projects.stop_privileged(changed)
+        return changed
 
     def refused(request: Request, refusal: InvitationRefused) -> Response:
         return pages.problem(
@@ -140,14 +152,18 @@ def users_routes(
         return [UserOut.of(user) for user in accounts.users()]
 
     @router.patch("/api/users/{email}", response_model=UserOut)
-    def change_role(
-        request: Request, _: CurrentAdministrator, email: str, change: RoleChange
+    def change_user(
+        request: Request, _: CurrentAdministrator, email: str, change: UserChange
     ) -> object:
-        try:
-            changed = accounts.change_role(email, change.role)
-        except LastAdministrator:
-            return last_administrator(request)
-        if changed is None:
+        changed: User | None = found(email)
+        if change.role is not None:
+            try:
+                changed = accounts.change_role(email, change.role)
+            except LastAdministrator:
+                return last_administrator(request)
+        if changed is not None and change.privileged_projects is not None:
+            changed = permit(email, change.privileged_projects)
+        if changed is None:  # removed meanwhile
             raise HTTPException(404)
         return UserOut.of(changed)
 
@@ -224,6 +240,15 @@ def users_routes(
         if changed.email == user.email and role == Role.USER:
             return RedirectResponse("/", status_code=303)  # this page is no longer theirs
         return RedirectResponse(f"/users/{quote(changed.email)}?changed={role}", status_code=303)
+
+    @router.post("/users/{email}/privileged-projects")
+    def permit_from_page(
+        _: CurrentAdministrator, email: str, permitted: Annotated[bool, Form()]
+    ) -> RedirectResponse:
+        changed = permit(found(email).email, permitted)
+        if changed is None:  # removed meanwhile
+            raise HTTPException(404)
+        return RedirectResponse(f"/users/{quote(changed.email)}", status_code=303)
 
     @router.post("/users/{email}/remove", response_model=None)
     def remove_from_page(

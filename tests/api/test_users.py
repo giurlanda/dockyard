@@ -36,7 +36,7 @@ def test_a_promoted_user_becomes_an_administrator_and_can_invite(
     promoted = change_role(dockyard, proxy, USER, "administrator")
 
     assert promoted.status_code == 200
-    assert promoted.json() == {"email": USER, "role": "administrator"}
+    assert promoted.json() == {"email": USER, "role": "administrator", "privileged_projects": False}
     assert role_of(dockyard, proxy, USER) == "administrator"
     invited = dockyard.post(
         "/api/invitations", json={"email": "friend@example.com"}, headers=proxy.headers(USER)

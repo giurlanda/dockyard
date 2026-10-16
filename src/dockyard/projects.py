@@ -8,7 +8,7 @@ import sqlite3
 import threading
 import time
 from collections.abc import Callable
-from contextlib import suppress
+from contextlib import nullcontext, suppress
 from dataclasses import dataclass, replace
 from enum import StrEnum
 from urllib.parse import urlsplit
@@ -119,6 +119,7 @@ class Refusal(StrEnum):
     CPUS_OUT_OF_RANGE = "cpus_out_of_range"
     MEMORY_OUT_OF_RANGE = "memory_out_of_range"
     ACTIVE_MAXIMUM = "active_maximum"
+    PRIVILEGED_NOT_PERMITTED = "privileged_not_permitted"
     CLONING = "cloning"
     NOT_RUNNING = "not_running"
 
@@ -189,6 +190,9 @@ class Project:
     git_credential: str | None = None  # its id
     cpus: float = PROJECT_CPUS  # the CPUs it may use
     memory: int = PROJECT_MEMORY  # the RAM it may use, in bytes
+    # Its environment runs privileged, which equals root on the host: only while its owner
+    # holds the permission to create Privileged Projects.
+    privileged: bool = False
 
 
 @dataclass(frozen=True)
@@ -235,6 +239,9 @@ class Projects:
         # The start of each Project's environment its Git Credential was last written into.
         self._written: dict[str, str] = {}
         self._writing = threading.Lock()
+        # Held while a Privileged Project starts, and while those of an owner whose permission
+        # was revoked are stopped: none starts privileged once its owner's are stopped.
+        self._starting_privileged = threading.Lock()
         self._closed = threading.Event()
 
     def create(
@@ -248,11 +255,13 @@ class Projects:
         git_credential: str | None = None,
         cpus: float | None = None,
         memory: int | None = None,
+        privileged: bool = False,
     ) -> Project:
         """Record the Project and start cloning it, with its Git Credential if it has one; once
         cloned, it starts (or waits for its owner's Claude Account). It may use `cpus` CPUs and
         `memory` bytes of RAM, within the Instance limits: their maximum when not given. It is
-        active from now on, so the owner must have fewer active Projects than the maximum.
+        active from now on, so the owner must have fewer active Projects than the maximum. A
+        `privileged` one needs its owner to hold the permission to create Privileged Projects.
 
         Raises ProjectRefused, RuntimeUnavailable.
         """
@@ -265,13 +274,15 @@ class Projects:
         if not MIN_MEMORY <= memory <= self.limits.max_memory:
             raise ProjectRefused(Refusal.MEMORY_OUT_OF_RANGE)
         self._check_git_credential(owner, git_credential, visibility, source.provider)
+        if privileged and not self._permitted(owner.runtime_id):
+            raise ProjectRefused(Refusal.PRIVILEGED_NOT_PERMITTED)
         try:
             with self._db.transaction() as conn:
                 # Counted and recorded in one statement: two creations at once cannot both pass.
                 created = conn.execute(
                     "INSERT INTO projects (owner, name, repository, provider, visibility,"
-                    " permission_mode, git_credential, cpus, memory, should_run)"
-                    " SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, 1"
+                    " permission_mode, git_credential, cpus, memory, privileged, should_run)"
+                    " SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1"
                     f" WHERE ({_ACTIVE}) < ? RETURNING id",
                     (
                         owner.runtime_id,
@@ -283,6 +294,7 @@ class Projects:
                         git_credential,
                         cpus,
                         memory,
+                        privileged,
                         owner.runtime_id,
                         self.limits.max_active,
                     ),
@@ -323,6 +335,7 @@ class Projects:
             git_credential,
             cpus,
             memory,
+            privileged,
         )
 
     def list_all(self) -> list[OwnedProject]:
@@ -360,6 +373,8 @@ class Projects:
             return None
         if self._runtime.project_status(project) == ProjectStatus.CLONING:
             raise ProjectRefused(Refusal.CLONING)
+        if row["privileged"] and not self._permitted(owner.runtime_id):
+            raise ProjectRefused(Refusal.PRIVILEGED_NOT_PERMITTED)
         with self._db.transaction() as conn:
             # Counted and recorded in one statement: two starts at once cannot both pass.
             active = conn.execute(
@@ -397,6 +412,16 @@ class Projects:
             return None
         self._stop(project)
         return self.get_any(project)
+
+    def stop_privileged(self, owner: User) -> None:
+        """Stop the owner's Privileged Projects: their permission was revoked, so they cannot
+        start again until it is granted again. Retried in the background until Docker lets them
+        all stop."""
+        try:
+            self._stop_privileged(owner.runtime_id)
+        except RuntimeUnavailable as error:
+            log.warning("Cannot stop the Privileged Projects of a User yet: %s", error)
+            self._stop_privileged_in_background(owner.runtime_id)
 
     def follow_log(self, owner: User, project: str) -> Output | None:
         """What the Project's Remote Control Server printed, then what it prints, until it stops
@@ -500,6 +525,10 @@ class Projects:
             waiting = conn.execute(
                 "SELECT DISTINCT owner FROM projects WHERE should_run = 1"
             ).fetchall()
+            revoked = conn.execute(
+                "SELECT DISTINCT owner FROM projects JOIN users ON runtime_id = owner"
+                " WHERE privileged = 1 AND privileged_projects = 0"
+            ).fetchall()
         for row in rows:
             if self._runtime.project_status(row["id"]) == ProjectStatus.CLONING:
                 self._follow(
@@ -514,6 +543,8 @@ class Projects:
                         memory=row["memory"],
                     ),
                 )
+        for (owner,) in revoked:  # stopped before, unless Dockyard stopped first
+            self._stop_privileged_in_background(owner)
         for (owner,) in waiting:
             if self._runtime.login_environment_running(owner):
                 self._follow_sign_in_in_background(owner)
@@ -570,18 +601,24 @@ class Projects:
 
     def _start(self, row: sqlite3.Row) -> None:
         """Start its Remote Control Server, or have it wait for its owner's Claude Account. It
-        is already active: never marked so here, which would undo a stop made meanwhile."""
+        is already active: never marked so here, which would undo a stop made meanwhile. A
+        Privileged Project whose owner no longer holds the permission is stopped instead."""
         if self._runtime.claude_account_connected(row["owner"]):
             with suppress(ProjectMissing):  # its status says so
-                self._runtime.start_project(
-                    row["owner"],
-                    row["id"],
-                    name=row["name"],
-                    permission_mode=row["permission_mode"],
-                    # Within the Instance limits as they are now, even if lowered since.
-                    cpus=min(row["cpus"], self.limits.max_cpus),
-                    memory=min(row["memory"], self.limits.max_memory),
-                )
+                with self._starting_privileged if row["privileged"] else nullcontext():
+                    if row["privileged"] and not self._permitted(row["owner"]):
+                        self._should_run(row["id"], False)
+                        return
+                    self._runtime.start_project(
+                        row["owner"],
+                        row["id"],
+                        name=row["name"],
+                        permission_mode=row["permission_mode"],
+                        # Within the Instance limits as they are now, even if lowered since.
+                        cpus=min(row["cpus"], self.limits.max_cpus),
+                        memory=min(row["memory"], self.limits.max_memory),
+                        privileged=bool(row["privileged"]),
+                    )
                 if row["git_credential"]:
                     start = self._runtime.project_starts().get(row["id"])
                     self._write_git_credential(row, start)
@@ -723,6 +760,37 @@ class Projects:
                 self._written.pop(project, None)
         self._runtime.remove_claude_account(removed.runtime_id)
 
+    def _stop_privileged(self, owner: str) -> None:
+        """Stop the owner's Privileged Projects, unless the permission was granted again
+        meanwhile. Raises RuntimeUnavailable."""
+        with self._starting_privileged:
+            if self._permitted(owner):
+                return
+            with self._db.transaction() as conn:
+                rows = conn.execute(
+                    "SELECT id FROM projects WHERE owner = ? AND privileged = 1", (owner,)
+                ).fetchall()
+            for row in rows:
+                self._stop(row["id"])
+
+    def _stop_privileged_in_background(self, owner: str) -> None:
+        threading.Thread(
+            target=self._stop_privileged_until_done,
+            args=(owner,),
+            name=f"revoke-{owner}",
+            daemon=True,
+        ).start()
+
+    def _stop_privileged_until_done(self, owner: str) -> None:
+        while True:
+            try:
+                self._stop_privileged(owner)
+                return
+            except RuntimeUnavailable as error:
+                log.warning("Cannot stop the Privileged Projects of %s yet: %s", owner, error)
+            if self._closed.wait(self._poll_interval):
+                return
+
     def _remove_owner_until_done(self, removed: RemovedUser) -> None:
         while not self._closed.wait(self._poll_interval):
             try:
@@ -753,6 +821,14 @@ class Projects:
             ).fetchone()
         return row
 
+    def _permitted(self, owner: str) -> bool:
+        """Whether the owner holds the permission to create Privileged Projects."""
+        with self._db.transaction() as conn:
+            row = conn.execute(
+                "SELECT privileged_projects FROM users WHERE runtime_id = ?", (owner,)
+            ).fetchone()
+        return bool(row and row["privileged_projects"])
+
     def _should_run(self, project: str, should_run: bool) -> None:
         with self._db.transaction() as conn:
             conn.execute("UPDATE projects SET should_run = ? WHERE id = ?", (should_run, project))
@@ -781,12 +857,13 @@ class Projects:
             git_credential=row["git_credential"],
             cpus=row["cpus"],
             memory=row["memory"],
+            privileged=bool(row["privileged"]),
         )
 
 
 _COLUMNS = (
     "id, name, repository, provider, visibility, permission_mode, should_run, git_credential,"
-    " cpus, memory"
+    " cpus, memory, privileged"
 )
 # Projects with their owner's email, as Administrators see them.
 _OWNED = (

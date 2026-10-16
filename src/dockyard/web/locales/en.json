@@ -235,5 +235,17 @@
   "all_projects.heading": "All Projects",
   "all_projects.explain": "Every Project on this Instance. Stop or delete any of them to free resources or stop abuse: deleting keeps its code and home folder unless you choose otherwise. Its Terminal, console and logs stay private to its User.",
   "all_projects.empty": "There are no Projects on this Instance yet.",
-  "all_projects.user": "User"
+  "all_projects.user": "User",
+  "project_refused.privileged_not_permitted.title": "Privileged Projects not permitted",
+  "project_refused.privileged_not_permitted.body": "Only a User an Administrator has granted the Privileged Projects permission can create or start a Privileged Project. Ask an Administrator if you need one.",
+  "project_new.privileged": "Privileged Project",
+  "privileged.warning": "A Privileged Project equals root on the host. Whatever runs in it, Claude or the repository's own code, can take over the whole machine and read every User's code, Git Credentials and Claude Account. Use it only when you need it, for example to run Docker inside the Project, and only with repositories you fully trust.",
+  "project_new.privileged_confirm": "Run this Project privileged: I understand that it equals root on the host",
+  "project.privileged": "Privileged",
+  "user.privileged.heading": "Privileged Projects",
+  "user.privileged.granted": "They may create Privileged Projects.",
+  "user.privileged.not_granted": "They cannot create Privileged Projects.",
+  "user.privileged.explain": "Grant this only to someone you would give root on this machine. Revoking it stops their Privileged Projects, which cannot start again until it is granted again.",
+  "user.privileged.grant": "Grant the permission",
+  "user.privileged.revoke": "Revoke the permission"
 }

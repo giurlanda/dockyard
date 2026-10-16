@@ -235,5 +235,17 @@
   "all_projects.heading": "Tutti i Progetti",
   "all_projects.explain": "Tutti i Progetti di questa Istanza. Fermane o eliminane uno qualsiasi per liberare risorse o fermare un abuso: l'eliminazione mantiene il codice e la cartella home, a meno che tu non scelga altrimenti. Terminale, console e log restano privati del suo Utente.",
   "all_projects.empty": "Non ci sono ancora Progetti su questa Istanza.",
-  "all_projects.user": "Utente"
+  "all_projects.user": "Utente",
+  "project_refused.privileged_not_permitted.title": "Progetti privilegiati non consentiti",
+  "project_refused.privileged_not_permitted.body": "Solo un Utente a cui un Amministratore ha concesso il permesso Progetti privilegiati può creare o avviare un Progetto privilegiato. Se te ne serve uno, chiedilo a un Amministratore.",
+  "project_new.privileged": "Progetto privilegiato",
+  "privileged.warning": "Un Progetto privilegiato equivale a root sull'host. Qualsiasi cosa vi giri, Claude o il codice stesso del repository, può prendere il controllo dell'intera macchina e leggere il codice, le Credenziali Git e l'Account Claude di ogni Utente. Usalo solo quando serve, per esempio per eseguire Docker dentro il Progetto, e solo con repository di cui ti fidi completamente.",
+  "project_new.privileged_confirm": "Esegui questo Progetto in modalità privilegiata: ho capito che equivale a root sull'host",
+  "project.privileged": "Privilegiato",
+  "user.privileged.heading": "Progetti privilegiati",
+  "user.privileged.granted": "Può creare Progetti privilegiati.",
+  "user.privileged.not_granted": "Non può creare Progetti privilegiati.",
+  "user.privileged.explain": "Concedilo solo a chi daresti root su questa macchina. Revocarlo ferma i suoi Progetti privilegiati, che non possono ripartire finché il permesso non viene concesso di nuovo.",
+  "user.privileged.grant": "Concedi il permesso",
+  "user.privileged.revoke": "Revoca il permesso"
 }

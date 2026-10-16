@@ -19,6 +19,7 @@
                 <strong>{{ project.name }}</strong>
               {% endif %}
               {% include "_project_status.html" %}
+              {% if project.privileged %}<span class="badge bad">{{ t("project.privileged") }}</span>{% endif %}
             </div>
             <p>{{ t("all_projects.user") }}: <span data-testid="project-user">{{ owned.owner }}</span></p>
             <p class="muted repository">{{ project.repository }}</p>

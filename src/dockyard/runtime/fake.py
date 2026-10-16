@@ -38,6 +38,9 @@ LAST_COMMIT = "Merge pull request #6 from Spaceghost/patch-1"
 USED_CPU = 0.5  # percent of one CPU
 USED_MEMORY = 200 * 1024**2  # bytes
 CTRL_C = "\x03"
+# The capability bounding set of a hardened environment, and of a privileged one (Linux 5.9+).
+NO_CAPABILITY = "0000000000000000"
+EVERY_CAPABILITY = "000001ffffffffff"
 # `git credential fill` for a host, as the contract suite types it in a Terminal.
 GIT_CREDENTIAL_FILL = re.compile(
     r"printf 'protocol=https\\nhost=(?P<host>[a-z.]+)\\n\\n' \| "
@@ -244,12 +247,14 @@ class FakeRuntime:
         permission_mode: str,
         cpus: float = PROJECT_CPUS,
         memory: int = PROJECT_MEMORY,
+        privileged: bool = False,
     ) -> None:
         self.check_reachable()
         with self._lock:
             found = self._projects.get(project)
             if not found or not found.code:
                 raise ProjectMissing(project)
+            found.privileged = privileged
             self._trusted.setdefault(user, set()).add(project_path(project))
             found.command = (
                 f"remote-control --name={name} --spawn worktree --permission-mode {permission_mode}"
@@ -394,6 +399,7 @@ class FakeRuntime:
         with self._lock:
             found = self._projects[project]
             cpus, memory = found.resources
+            bounding_set = EVERY_CAPABILITY if found.privileged else NO_CAPABILITY
             path = project_path(project)
             environment = self._remote_control.setdefault(found.user, {}).setdefault(
                 path, secrets.token_hex(8)
@@ -407,8 +413,9 @@ class FakeRuntime:
                 f"code: {LAST_COMMIT}",
                 f"remote: {found.repository}",
                 "user: 1000",
-                "capabilities: 0000000000000000",
-                "no new privileges: 1",
+                f"capabilities: {NO_CAPABILITY}",
+                f"capability bounding set: {bounding_set}",
+                f"no new privileges: {0 if found.privileged else 1}",
                 f"pids limit: {PROJECT_PIDS_LIMIT}",
                 f"memory limit: {memory}",
                 f"cpu limit: {round(cpus * 100000)} 100000",
@@ -447,6 +454,7 @@ class _Project:
     starts: int = 0  # how many times its server started, as counted in its home
     usage: tuple[float, int] = (USED_CPU, USED_MEMORY)
     resources: tuple[float, int] = (PROJECT_CPUS, PROJECT_MEMORY)  # the CPUs and RAM it may use
+    privileged: bool = False  # its environment runs privileged
     launches: int = 0  # how many times its environment started, by Dockyard or by itself
     git_token: GitToken | None = None  # what its tmpfs holds, written since it last started
 

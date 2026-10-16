@@ -133,10 +133,46 @@ def test_a_project_runs_hardened_as_the_non_root_user_with_limits(
     log = server_ready(runtime, project)
     assert reported(log, "user") == "1000"
     assert reported(log, "capabilities") == "0000000000000000"
+    assert reported(log, "capability bounding set") == "0000000000000000"
     assert reported(log, "no new privileges") == "1"
     assert reported(log, "pids limit") == "2048"
     assert reported(log, "memory limit") == str(4 * 1024**3)
     assert reported(log, "cpu limit") == "200000 100000"  # 2 CPUs
+
+
+def test_a_privileged_project_runs_privileged_with_the_same_user_and_limits(
+    runtime: Runtime, new_user: Callable[[], str]
+) -> None:
+    user = new_user()
+    project = cloned(runtime, user)
+
+    runtime.start_project(
+        user, project, name="Hello", permission_mode="default", cpus=1.5, privileged=True
+    )
+
+    log = server_ready(runtime, project)
+    assert reported(log, "capability bounding set") != "0000000000000000"  # every capability
+    assert reported(log, "no new privileges") == "0"  # it may become root
+    assert reported(log, "user") == "1000"
+    assert reported(log, "pids limit") == "2048"
+    assert reported(log, "memory limit") == str(4 * 1024**3)
+    assert reported(log, "cpu limit") == "150000 100000"  # 1.5 CPUs
+
+
+def test_a_privileged_project_started_again_unprivileged_is_hardened_again(
+    runtime: Runtime, new_user: Callable[[], str]
+) -> None:
+    user = new_user()
+    project = cloned(runtime, user)
+    runtime.start_project(user, project, name="Hello", permission_mode="default", privileged=True)
+    server_ready(runtime, project)
+
+    runtime.start_project(user, project, name="Hello", permission_mode="default")
+
+    log = server_ready(runtime, project)
+    assert reported(log, "starts") == "2"
+    assert reported(log, "capability bounding set") == "0000000000000000"
+    assert reported(log, "no new privileges") == "1"
 
 
 def test_a_project_runs_within_the_cpu_and_ram_it_was_given(

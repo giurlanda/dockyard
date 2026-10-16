@@ -66,6 +66,7 @@ remote_control() {
   echo "remote: $(git remote get-url origin 2>&1)"
   echo "user: $(id -u)"
   echo "capabilities: $(awk '/^CapEff/ {print $2}' /proc/self/status)"
+  echo "capability bounding set: $(awk '/^CapBnd/ {print $2}' /proc/self/status)"
   echo "no new privileges: $(awk '/^NoNewPrivs/ {print $2}' /proc/self/status)"
   echo "pids limit: $(cat /sys/fs/cgroup/pids.max)"
   echo "memory limit: $(cat /sys/fs/cgroup/memory.max)"

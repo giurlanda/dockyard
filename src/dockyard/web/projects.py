@@ -53,6 +53,7 @@ class NewProject(BaseModel):
     git_credential: str | None = None  # the id of one of the User's Git Credentials
     cpus: float | None = None  # None: the most the Instance allows
     memory: int | None = None  # bytes. None: the most the Instance allows
+    privileged: bool = False  # only for a User holding the permission
 
 
 class ProjectOut(BaseModel):
@@ -66,6 +67,7 @@ class ProjectOut(BaseModel):
     git_credential: str | None
     cpus: float
     memory: int  # bytes
+    privileged: bool
 
     @classmethod
     def of(cls, project: Project) -> ProjectOut:
@@ -80,6 +82,7 @@ class ProjectOut(BaseModel):
             git_credential=project.git_credential,
             cpus=project.cpus,
             memory=project.memory,
+            privileged=project.privileged,
         )
 
 
@@ -107,13 +110,17 @@ def projects_routes(projects: Projects, git_credentials: GitCredentials, pages: 
     conflicts = (Refusal.CLONING, Refusal.NOT_RUNNING, Refusal.ACTIVE_MAXIMUM)
     limits = limits_shown(projects.limits)
 
+    def status_code(refusal: ProjectRefused) -> int:
+        if refusal.reason == Refusal.PRIVILEGED_NOT_PERMITTED:
+            return 403
+        return 409 if refusal.reason in conflicts else 422
+
     def refused(request: Request, refusal: ProjectRefused) -> Response:
-        status_code = 409 if refusal.reason in conflicts else 422
         return pages.problem(
             request,
             refusal.reason,
             key=f"project_refused.{refusal.reason}",
-            status_code=status_code,
+            status_code=status_code(refusal),
             **limits,
         )
 
@@ -174,6 +181,7 @@ def projects_routes(projects: Projects, git_credentials: GitCredentials, pages: 
                 git_credential=new.git_credential,
                 cpus=new.cpus,
                 memory=new.memory,
+                privileged=new.privileged,
             )
         except ProjectRefused as refusal:
             return refused(request, refusal)
@@ -263,6 +271,7 @@ def projects_routes(projects: Projects, git_credentials: GitCredentials, pages: 
         permission_mode: Annotated[PermissionMode, Form()] = PermissionMode.DEFAULT,
         cpus: Annotated[str, Form()] = "",  # "": the most the Instance allows
         memory: Annotated[str, Form()] = "",  # in GiB. "": the most the Instance allows
+        privileged: Annotated[bool, Form()] = False,
     ) -> Response:
         try:
             chosen_memory = _amount(memory, Refusal.MEMORY_OUT_OF_RANGE)
@@ -275,6 +284,7 @@ def projects_routes(projects: Projects, git_credentials: GitCredentials, pages: 
                 git_credential=git_credential or None,
                 cpus=_amount(cpus, Refusal.CPUS_OUT_OF_RANGE),
                 memory=None if chosen_memory is None else round(chosen_memory * GIB),
+                privileged=privileged,
             )
         except ProjectRefused as refusal:
             return new_project_page(
@@ -288,7 +298,7 @@ def projects_routes(projects: Projects, git_credentials: GitCredentials, pages: 
                 cpus=cpus,
                 memory=memory,
                 problem=f"project_refused.{refusal.reason}.body",
-                status_code=422,
+                status_code=403 if refusal.reason == Refusal.PRIVILEGED_NOT_PERMITTED else 422,
             )
         return RedirectResponse(f"/projects/{project.id}", status_code=303)
 

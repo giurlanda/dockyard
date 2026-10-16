@@ -24,6 +24,25 @@
       {% endif %}
     </form>
   </section>
+  <section class="panel" aria-labelledby="privileged">
+    <h2 id="privileged">{{ t("user.privileged.heading") }}</h2>
+    {% if shown.privileged_projects %}
+      <p>{{ t("user.privileged.granted") }}</p>
+    {% else %}
+      <p class="muted">{{ t("user.privileged.not_granted") }}</p>
+    {% endif %}
+    <p class="warning">{{ t("privileged.warning") }}</p>
+    <p>{{ t("user.privileged.explain") }}</p>
+    <form method="post" action="/users/{{ shown.email|urlencode }}/privileged-projects">
+      {% if shown.privileged_projects %}
+        <input type="hidden" name="permitted" value="false">
+        <button>{{ t("user.privileged.revoke") }}</button>
+      {% else %}
+        <input type="hidden" name="permitted" value="true">
+        <button class="danger">{{ t("user.privileged.grant") }}</button>
+      {% endif %}
+    </form>
+  </section>
   <section class="panel" aria-labelledby="remove">
     <h2 id="remove">{{ t("user.remove.heading") }}</h2>
     <p class="warning">{{ t("user.remove.explain") }}</p>

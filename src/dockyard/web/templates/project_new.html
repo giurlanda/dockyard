@@ -85,6 +85,16 @@
           </div>
         </div>
       </fieldset>
+      {% if user.privileged_projects %}
+        <fieldset class="field privileged">
+          <legend>{{ t("project_new.privileged") }}</legend>
+          <p class="warning" id="privileged-warning" role="note">{{ t("privileged.warning") }}</p>
+          <label class="check">
+            <input type="checkbox" name="privileged" value="true" aria-describedby="privileged-warning">
+            {{ t("project_new.privileged_confirm") }}
+          </label>
+        </fieldset>
+      {% endif %}
       <div class="actions">
         <button class="primary">{{ t("project_new.create") }}</button>
         <a href="/">{{ t("notice.home") }}</a>

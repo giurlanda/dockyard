@@ -86,6 +86,14 @@ MIGRATIONS = (
     ALTER TABLE projects ADD COLUMN memory INTEGER NOT NULL DEFAULT 4294967296
         CHECK (memory > 0);
     """,
+    # privileged_projects: an Administrator granted the User the permission to create Privileged
+    # Projects, whose environment runs privileged (root on the host) while the permission holds.
+    """
+    ALTER TABLE users ADD COLUMN privileged_projects INTEGER NOT NULL DEFAULT 0
+        CHECK (privileged_projects IN (0, 1));
+    ALTER TABLE projects ADD COLUMN privileged INTEGER NOT NULL DEFAULT 0
+        CHECK (privileged IN (0, 1));
+    """,
 )
 
 

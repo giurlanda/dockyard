@@ -7,6 +7,7 @@
     <div class="panel-heading">
       <h1>{{ project.name }}</h1>
       {% include "_project_status.html" %}
+      {% if project.privileged %}<span class="badge bad">{{ t("project.privileged") }}</span>{% endif %}
     </div>
     <p>{{ t("project.repository") }}:
       <a href="{{ project.repository }}" target="_blank" rel="noopener noreferrer">{{ project.repository }}</a></p>
@@ -24,6 +25,7 @@
     {% if project.permission_mode == "bypassPermissions" %}
       <p class="warning">{{ t("permission_mode.bypass_warning") }}</p>
     {% endif %}
+    {% if project.privileged %}<p class="warning">{{ t("privileged.warning") }}</p>{% endif %}
     {% if project.status == "cloning" %}
       <p>{{ t("project.cloning") }}</p>
       <pre class="output" role="log" aria-label="{{ t('project.clone_output') }}"

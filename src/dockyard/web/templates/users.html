@@ -41,6 +41,7 @@
         <li>
           <a href="/users/{{ listed.email|urlencode }}">{{ listed.email }}</a>
           <span class="badge">{{ t("role." ~ listed.role) }}</span>
+          {% if listed.privileged_projects %}<span class="badge bad">{{ t("user.privileged.heading") }}</span>{% endif %}
           {% if listed.email == user.email %}<span class="muted">{{ t("users.you") }}</span>{% endif %}
         </li>
       {% endfor %}

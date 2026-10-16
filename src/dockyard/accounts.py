@@ -41,6 +41,8 @@ class User:
     email: str
     role: Role
     runtime_id: str  # names the User's resources in the Runtime; never reused
+    # An Administrator granted them the permission to create Privileged Projects.
+    privileged_projects: bool = False
 
 
 @dataclass(frozen=True)
@@ -91,7 +93,7 @@ class Accounts:
     def find_user(self, email: str) -> User | None:
         with self._db.transaction() as conn:
             row = conn.execute(
-                "SELECT email, role, runtime_id FROM users WHERE email = ?",
+                f"SELECT {_USER_COLUMNS} FROM users WHERE email = ?",
                 (normalise_email(email),),
             ).fetchone()
         return _user(row) if row else None
@@ -99,7 +101,7 @@ class Accounts:
     def users(self) -> list[User]:
         with self._db.transaction() as conn:
             rows = conn.execute(
-                "SELECT email, role, runtime_id FROM users ORDER BY created_at, rowid"
+                f"SELECT {_USER_COLUMNS} FROM users ORDER BY created_at, rowid"
             ).fetchall()
         return [_user(row) for row in rows]
 
@@ -114,11 +116,22 @@ class Accounts:
             row = conn.execute(
                 "UPDATE users SET role = ? WHERE email = ?"
                 f" AND (? = 'administrator' OR {_NOT_THE_LAST_ADMINISTRATOR})"
-                " RETURNING email, role, runtime_id",
+                f" RETURNING {_USER_COLUMNS}",
                 (role, email, role),
             ).fetchone()
             if row is None and _exists(conn, email):
                 raise LastAdministrator
+        return _user(row) if row else None
+
+    def permit_privileged_projects(self, email: str, permitted: bool) -> User | None:
+        """Grant or revoke the User's permission to create Privileged Projects. None if there
+        is no such User."""
+        with self._db.transaction() as conn:
+            row = conn.execute(
+                "UPDATE users SET privileged_projects = ? WHERE email = ?"
+                f" RETURNING {_USER_COLUMNS}",
+                (permitted, normalise_email(email)),
+            ).fetchone()
         return _user(row) if row else None
 
     def remove_user(self, email: str) -> RemovedUser | None:
@@ -186,6 +199,7 @@ def valid_email(email: str) -> str:
     return email
 
 
+_USER_COLUMNS = "email, role, runtime_id, privileged_projects"
 # Holds for a User about to stop being an Administrator, unless they are the last one.
 _NOT_THE_LAST_ADMINISTRATOR = (
     "(role = 'user' OR (SELECT count(*) FROM users WHERE role = 'administrator') > 1)"
@@ -197,4 +211,9 @@ def _exists(conn: sqlite3.Connection, email: str) -> bool:
 
 
 def _user(row: sqlite3.Row) -> User:
-    return User(email=row["email"], role=Role(row["role"]), runtime_id=row["runtime_id"])
+    return User(
+        email=row["email"],
+        role=Role(row["role"]),
+        runtime_id=row["runtime_id"],
+        privileged_projects=bool(row["privileged_projects"]),
+    )

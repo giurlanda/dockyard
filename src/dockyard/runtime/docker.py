@@ -322,6 +322,7 @@ class DockerRuntime:
         permission_mode: str,
         cpus: float = PROJECT_CPUS,
         memory: int = PROJECT_MEMORY,
+        privileged: bool = False,
     ) -> None:
         path = project_path(project)
         with self._docker():
@@ -369,7 +370,11 @@ class DockerRuntime:
                 dns=list(self._dns),
                 mem_limit=memory,
                 nano_cpus=round(cpus * 1_000_000_000),
-                **{**HARDENING, "pids_limit": PROJECT_PIDS_LIMIT},
+                # Hardened, unless it is a Privileged Project: that equals root on the host.
+                **{
+                    **({"privileged": True} if privileged else HARDENING),
+                    "pids_limit": PROJECT_PIDS_LIMIT,
+                },
             )
             environment.start()
 

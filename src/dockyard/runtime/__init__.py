@@ -179,9 +179,14 @@ class Runtime(Protocol):
         permission_mode: str,
         cpus: float = PROJECT_CPUS,
         memory: int = PROJECT_MEMORY,
+        privileged: bool = False,
     ) -> None:
         """(Re)create the Project's environment, which may use `cpus` CPUs and `memory` bytes
         of RAM, and start its Remote Control Server in it.
+
+        The environment is hardened (no capabilities, no new privileges), unless `privileged`:
+        then it runs privileged, which equals root on the host. Either way it runs as the
+        non-root user, within its limits.
 
         Before it starts, the User's Claude config trusts project_path(project). The server is
         `claude remote-control --name=<name> --spawn worktree --permission-mode <mode>`, run in
