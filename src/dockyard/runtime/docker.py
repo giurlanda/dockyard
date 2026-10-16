@@ -742,7 +742,7 @@ class DockerRuntime:
         except ImageNotFound as error:
             raise RuntimeUnavailable(
                 f"An image is not on this Docker host ({error}). If it is the Base Image "
-                f"{self._base_image}, build it with: docker compose build"
+                f"{self._base_image}, pull it with: docker compose pull"
             ) from error
         except (DockerException, requests.RequestException) as error:
             raise RuntimeUnavailable(f"Docker failed: {error}") from error

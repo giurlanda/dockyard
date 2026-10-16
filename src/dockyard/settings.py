@@ -19,7 +19,9 @@ FALSE = ("", "0", "false", "no", "off")
 EMAIL = re.compile(r"^[^@\s]+@[^@\s]+$")
 TEAM_NAME = re.compile(r"^[A-Za-z0-9-]+$")
 GENERATE_SECRET_KEY = "Generate one with: openssl rand -base64 32 | tr '+/' '-_'"
-DEFAULT_BASE_IMAGE = "dockyard-base:latest"  # built by compose.yaml from images/base
+# Published by the Release workflow. compose.yaml always sets DOCKYARD_BASE_IMAGE, to the Base
+# Image of DOCKYARD_VERSION: this default serves Dockyard run outside compose.
+DEFAULT_BASE_IMAGE = "ghcr.io/giurlanda/dockyard-base:latest"
 
 
 class ConfigError(Exception):

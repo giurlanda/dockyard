@@ -1,0 +1,7 @@
+# Builds Dockyard and the Base Image from this checkout instead of pulling the published ones:
+#   docker compose -f compose.yaml -f compose.dev.yaml up -d --build
+services:
+  dockyard:
+    build: .
+  base-image:
+    build: images/base

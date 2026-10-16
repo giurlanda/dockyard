@@ -2,7 +2,9 @@ name: CI
 
 on:
   push:
+    branches: ["**"]  # a version tag runs CI from the Release workflow instead
   pull_request:
+  workflow_call:  # the Release workflow publishes only what passes
 
 jobs:
   lint:
