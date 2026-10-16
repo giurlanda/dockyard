@@ -1,0 +1,51 @@
+{% extends "base.html" %}
+{% set label = t("images.base.label") if image.base else image.label %}
+{% block title %}{{ label }}{% endblock %}
+{% block header %}{% include "_user.html" %}{% endblock %}
+{% block content %}
+  <section class="panel">
+    <div class="panel-heading">
+      <h1>{{ label }}</h1>
+      {% include "_image_status.html" %}
+    </div>
+    {% if problem %}<p class="outcome bad" role="alert">{{ t(problem) }}</p>{% endif %}
+    <p>{{ t("images.base.description") if image.base else image.description }}</p>
+    {% if image.base %}
+      <p class="muted">{{ t("image.base_explain") }}</p>
+    {% elif image.status == "building" %}
+      <p class="warning" data-follow-image="/api/images/{{ image.id }}">{{ t("image.building") }}</p>
+    {% elif image.status == "ready" %}
+      <p class="outcome good">{{ t("image.ready") }}</p>
+    {% else %}
+      <p class="warning">{{ t("image.failure." ~ image.failure) }}</p>
+    {% endif %}
+    <p><a href="/images">{{ t("images.back") }}</a></p>
+  </section>
+  {% if not image.base %}
+    <section class="panel" aria-labelledby="instructions">
+      <h2 id="instructions">{{ t("image_new.instructions") }}</h2>
+      <pre class="instructions">{{ image.instructions }}</pre>
+    </section>
+    <section class="panel" aria-labelledby="log">
+      <h2 id="log">{{ t("image.log") }}</h2>
+      <pre class="output" role="log" aria-labelledby="log" data-image-log>{{ image.log }}</pre>
+    </section>
+  {% endif %}
+  {% if not image.base %}
+    <section class="panel" aria-labelledby="delete">
+      <h2 id="delete">{{ t("image.delete.heading") }}</h2>
+      {% if used_by %}
+        <p>{{ t("image.delete.in_use") }}</p>
+        <ul class="used-by" aria-label="{{ t('image.used_by') }}">
+          {% for project in used_by %}<li>{{ project.name }} <span class="muted">({{ project.owner }})</span></li>{% endfor %}
+        </ul>
+      {% else %}
+        <p class="muted">{{ t("image.delete.explain") }}</p>
+        <form method="post" action="/images/{{ image.id }}/delete">
+          <div class="actions"><button class="danger">{{ t("image.delete.button") }}</button></div>
+        </form>
+      {% endif %}
+    </section>
+  {% endif %}
+{% endblock %}
+{% block scripts %}<script src="/static/image.js"></script>{% endblock %}

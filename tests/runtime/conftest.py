@@ -157,6 +157,24 @@ def new_user(request: pytest.FixtureRequest) -> Iterator[Callable[[], str]]:
                 _remove_when_unused(volume)
 
 
+@pytest.fixture
+def new_image(request: pytest.FixtureRequest) -> Iterator[Callable[[], str]]:
+    """Each call is a new Image, by its id, removed from Docker after the test."""
+    images: list[str] = []
+
+    def new_image() -> str:
+        images.append(secrets.token_hex(8))
+        return images[-1]
+
+    yield new_image
+    if request.node.callspec.params.get("make_runtime") == "docker":
+        daemon: docker.DockerClient = request.getfixturevalue("docker_daemon")
+        for image in images:
+            for found in daemon.images.list(filters={"label": f"dockyard.image={image}"}):
+                with suppress(NotFound, APIError):
+                    daemon.images.remove(str(found.id), force=True)
+
+
 def new_project() -> str:
     """A new Project, by its id. Its resources carry its User's label, so new_user cleans up."""
     return secrets.token_hex(8)

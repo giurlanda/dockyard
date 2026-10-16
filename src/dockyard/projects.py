@@ -16,6 +16,7 @@ from urllib.parse import urlsplit
 from .accounts import RemovedUser, User
 from .database import Database
 from .git_credentials import GitCredentials
+from .images import BASE_IMAGE, ImageStatus
 from .providers import Provider
 from .runtime import (
     PROJECT_CPUS,
@@ -120,6 +121,7 @@ class Refusal(StrEnum):
     MEMORY_OUT_OF_RANGE = "memory_out_of_range"
     ACTIVE_MAXIMUM = "active_maximum"
     PRIVILEGED_NOT_PERMITTED = "privileged_not_permitted"
+    IMAGE_NOT_AVAILABLE = "image_not_available"
     CLONING = "cloning"
     NOT_RUNNING = "not_running"
 
@@ -193,6 +195,7 @@ class Project:
     # Its environment runs privileged, which equals root on the host: only while its owner
     # holds the permission to create Privileged Projects.
     privileged: bool = False
+    image: str = BASE_IMAGE  # the id of the Image its environment runs
 
 
 @dataclass(frozen=True)
@@ -216,6 +219,7 @@ class CloneReport:
     output: str = ""
     cpus: float | None = None
     memory: int | None = None  # bytes
+    image: str = BASE_IMAGE
 
 
 class Projects:
@@ -256,12 +260,14 @@ class Projects:
         cpus: float | None = None,
         memory: int | None = None,
         privileged: bool = False,
+        image: str = BASE_IMAGE,
     ) -> Project:
         """Record the Project and start cloning it, with its Git Credential if it has one; once
-        cloned, it starts (or waits for its owner's Claude Account). It may use `cpus` CPUs and
-        `memory` bytes of RAM, within the Instance limits: their maximum when not given. It is
-        active from now on, so the owner must have fewer active Projects than the maximum. A
-        `privileged` one needs its owner to hold the permission to create Privileged Projects.
+        cloned, it starts (or waits for its owner's Claude Account) in its `image`, which must be
+        ready. It may use `cpus` CPUs and `memory` bytes of RAM, within the Instance limits:
+        their maximum when not given. It is active from now on, so the owner must have fewer
+        active Projects than the maximum. A `privileged` one needs its owner to hold the
+        permission to create Privileged Projects.
 
         Raises ProjectRefused, RuntimeUnavailable.
         """
@@ -276,13 +282,16 @@ class Projects:
         self._check_git_credential(owner, git_credential, visibility, source.provider)
         if privileged and not self._permitted(owner.runtime_id):
             raise ProjectRefused(Refusal.PRIVILEGED_NOT_PERMITTED)
+        if not self._image_ready(image):
+            raise ProjectRefused(Refusal.IMAGE_NOT_AVAILABLE)
         try:
             with self._db.transaction() as conn:
                 # Counted and recorded in one statement: two creations at once cannot both pass.
                 created = conn.execute(
                     "INSERT INTO projects (owner, name, repository, provider, visibility,"
-                    " permission_mode, git_credential, cpus, memory, privileged, should_run)"
-                    " SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1"
+                    " permission_mode, git_credential, cpus, memory, privileged, image,"
+                    " should_run)"
+                    " SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1"
                     f" WHERE ({_ACTIVE}) < ? RETURNING id",
                     (
                         owner.runtime_id,
@@ -295,11 +304,14 @@ class Projects:
                         cpus,
                         memory,
                         privileged,
+                        None if image == BASE_IMAGE else image,
                         owner.runtime_id,
                         self.limits.max_active,
                     ),
                 ).fetchone()
-        except sqlite3.IntegrityError as error:  # its Git Credential was deleted meanwhile
+        except sqlite3.IntegrityError as error:  # its Git Credential or Image deleted meanwhile
+            if not self._image_ready(image):
+                raise ProjectRefused(Refusal.IMAGE_NOT_AVAILABLE) from error
             raise ProjectRefused(Refusal.GIT_CREDENTIAL_NOT_FOUND) from error
         if created is None:
             raise ProjectRefused(Refusal.ACTIVE_MAXIMUM)
@@ -322,6 +334,7 @@ class Projects:
                 git_credential,
                 cpus=cpus,
                 memory=memory,
+                image=image,
             ),
         )
         return Project(
@@ -336,6 +349,7 @@ class Projects:
             cpus,
             memory,
             privileged,
+            image,
         )
 
     def list_all(self) -> list[OwnedProject]:
@@ -541,6 +555,7 @@ class Projects:
                         row["git_credential"],
                         cpus=row["cpus"],
                         memory=row["memory"],
+                        image=row["image"] or BASE_IMAGE,
                     ),
                 )
         for (owner,) in revoked:  # stopped before, unless Dockyard stopped first
@@ -618,6 +633,7 @@ class Projects:
                         cpus=min(row["cpus"], self.limits.max_cpus),
                         memory=min(row["memory"], self.limits.max_memory),
                         privileged=bool(row["privileged"]),
+                        image=row["image"],
                     )
                 if row["git_credential"]:
                     start = self._runtime.project_starts().get(row["id"])
@@ -821,6 +837,14 @@ class Projects:
             ).fetchone()
         return row
 
+    def _image_ready(self, image: str) -> bool:
+        """Whether Users may pick the Image for a Project."""
+        if image == BASE_IMAGE:
+            return True
+        with self._db.transaction() as conn:
+            row = conn.execute("SELECT status FROM images WHERE id = ?", (image,)).fetchone()
+        return bool(row and row["status"] == ImageStatus.READY)
+
     def _permitted(self, owner: str) -> bool:
         """Whether the owner holds the permission to create Privileged Projects."""
         with self._db.transaction() as conn:
@@ -858,12 +882,13 @@ class Projects:
             cpus=row["cpus"],
             memory=row["memory"],
             privileged=bool(row["privileged"]),
+            image=row["image"] or BASE_IMAGE,
         )
 
 
 _COLUMNS = (
     "id, name, repository, provider, visibility, permission_mode, should_run, git_credential,"
-    " cpus, memory, privileged"
+    " cpus, memory, privileged, image"
 )
 # Projects with their owner's email, as Administrators see them.
 _OWNED = (

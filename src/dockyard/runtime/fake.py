@@ -21,6 +21,8 @@ from . import (
     Clone,
     CloneState,
     GitToken,
+    ImageCheck,
+    ImageMissing,
     LoginNotRunning,
     Output,
     ProjectMissing,
@@ -46,6 +48,14 @@ GIT_CREDENTIAL_FILL = re.compile(
     r"printf 'protocol=https\\nhost=(?P<host>[a-z.]+)\\n\\n' \| "
     r"GIT_TERMINAL_PROMPT=0 git credential fill"
 )
+BASE_IMAGE = "dockyard-base:latest"
+CLAUDE_VERSION = "2.1.0 (Claude Code)"
+# The build instructions the fake understands, as the contract suite writes them. Any other one
+# succeeds and changes nothing.
+WRITE_FILE = re.compile(r"RUN echo (?P<text>\S+) > (?P<path>/\S+)")
+REMOVE_CLAUDE = re.compile(r"RUN rm (-f )?/usr/local/bin/claude")
+CHANGE_UID = re.compile(r"RUN usermod --non-unique --uid (?P<uid>\d+) ubuntu")
+FAIL = "RUN false"
 
 
 class FakeRuntime:
@@ -65,6 +75,9 @@ class FakeRuntime:
         self._repositories: dict[str, str | None] = {}
         self._projects: dict[str, _Project] = {}
         self._clones_paused = False
+        self._images: dict[str, _Image] = {}
+        self._builds_resumed = threading.Event()  # cleared while builds are paused
+        self._builds_resumed.set()
 
     def publish_repository(self, url: str, *, token: str | None = None) -> None:
         """From now on, `url` is a repository that can be cloned: a public one, or with `token`
@@ -85,6 +98,15 @@ class FakeRuntime:
                 for project in self._projects.values():
                     if project.clone and project.clone.state == CloneState.RUNNING:
                         project.clone = project.clone_outcome
+
+    @contextmanager
+    def builds_paused(self) -> Iterator[None]:
+        """Builds started meanwhile print their first step, then wait for the end of the block."""
+        self._builds_resumed.clear()
+        try:
+            yield
+        finally:
+            self._builds_resumed.set()
 
     @contextmanager
     def unavailable(self) -> Iterator[None]:
@@ -248,12 +270,16 @@ class FakeRuntime:
         cpus: float = PROJECT_CPUS,
         memory: int = PROJECT_MEMORY,
         privileged: bool = False,
+        image: str | None = None,
     ) -> None:
         self.check_reachable()
         with self._lock:
             found = self._projects.get(project)
             if not found or not found.code:
                 raise ProjectMissing(project)
+            if image is not None and image not in self._images:
+                raise RuntimeUnavailable(f"The image of {image} is not on this Docker host.")
+            found.files = dict(self._images[image].files) if image else {}
             found.privileged = privileged
             self._trusted.setdefault(user, set()).add(project_path(project))
             found.command = (
@@ -353,6 +379,41 @@ class FakeRuntime:
         if server:
             server.end()
 
+    def build_image(self, image: str, instructions: str, *, output: Callable[[str], None]) -> bool:
+        self.check_reachable()
+        steps = [f"FROM {BASE_IMAGE}", "USER root", *_instructions(instructions), "USER ubuntu"]
+        built = _Image()
+        for number, step in enumerate(steps, start=1):
+            output(f"Step {number}/{len(steps)} : {step}\n")
+            if number == 1:
+                self._builds_resumed.wait()
+            if step == FAIL:
+                output("The command '/bin/sh -c false' returned a non-zero code: 1\n")
+                return False
+            if written := WRITE_FILE.fullmatch(step):
+                built.files[written["path"]] = written["text"]
+            elif REMOVE_CLAUDE.fullmatch(step):
+                built.claude = None
+            elif changed := CHANGE_UID.fullmatch(step):
+                built.uid = int(changed["uid"])
+        output(f"Successfully built {secrets.token_hex(6)}\n")
+        with self._lock:
+            self._images[image] = built
+        return True
+
+    def check_image(self, image: str) -> ImageCheck:
+        self.check_reachable()
+        with self._lock:
+            built = self._images.get(image)
+        if built is None:
+            raise ImageMissing(image)
+        return ImageCheck(uid=built.uid, claude=built.claude)
+
+    def remove_image(self, image: str) -> None:
+        self.check_reachable()
+        with self._lock:
+            self._images.pop(image, None)
+
     def _running_server(self, project: str) -> _Server:
         """Raises ProjectNotRunning."""
         self.check_reachable()
@@ -382,6 +443,7 @@ class FakeRuntime:
             report=lambda: self._report(project),
             exited=lambda: self._restart(project, server),
             git_token=lambda: self._git_token(project),
+            files=found.files,
         )
         with self._lock:
             found.server = server
@@ -457,6 +519,16 @@ class _Project:
     privileged: bool = False  # its environment runs privileged
     launches: int = 0  # how many times its environment started, by Dockyard or by itself
     git_token: GitToken | None = None  # what its tmpfs holds, written since it last started
+    files: dict[str, str] = field(default_factory=dict)  # what its Image's instructions wrote
+
+
+@dataclass
+class _Image:
+    """A built Image, as far as the fake understands its instructions."""
+
+    files: dict[str, str] = field(default_factory=dict)  # path: text
+    uid: int = 1000  # of its default user
+    claude: str | None = CLAUDE_VERSION
 
 
 class _Program:
@@ -589,12 +661,14 @@ class _Server(_Program):
         report: Callable[[], list[str]],
         exited: Callable[[], None],
         git_token: Callable[[], GitToken | None],
+        files: dict[str, str],
     ) -> None:
         super().__init__()
         self._trust = trust
         self._report = report
         self._exited = exited
         self._git_token = git_token
+        self._files = files
         self._shells: list[_Shell] = []  # its environment's Terminals
         self.asking = not trusted
         self._lines(intro)
@@ -630,7 +704,7 @@ class _Server(_Program):
 
     def open_shell(self, path: str) -> _Watcher:
         """A Terminal in its environment."""
-        shell = _Shell(path, self._git_token)
+        shell = _Shell(path, self._git_token, self._files)
         watcher = shell.attach()
         with self._lock:
             if self._over:
@@ -665,10 +739,13 @@ class _Shell(_Program):
     """`bash -l` of the non-root user in a Project's path, as far as the contract suite types in
     it."""
 
-    def __init__(self, path: str, git_token: Callable[[], GitToken | None]) -> None:
+    def __init__(
+        self, path: str, git_token: Callable[[], GitToken | None], files: dict[str, str]
+    ) -> None:
         super().__init__()
         self._path = path
         self._git_token = git_token  # what its environment's tmpfs holds
+        self._files = files  # what its environment's Image wrote
         self._sleeping = False  # it runs `sleep`, until interrupted
 
     def prompt(self) -> None:
@@ -712,6 +789,10 @@ class _Shell(_Program):
             self._print(f"{self._token_for('gitlab.com') or ''}\r\n")
         elif (fill := GIT_CREDENTIAL_FILL.fullmatch(command)) is not None:
             self._fill(fill["host"])
+        elif command.startswith("cat "):
+            path = command.removeprefix("cat ").strip()
+            text = self._files.get(path)
+            self._print(f"{text}\r\n" if text else f"cat: {path}: No such file or directory\r\n")
         elif command:
             self._print(f"bash: {command.split()[0]}: command not found\r\n")
         self.prompt()
@@ -759,3 +840,20 @@ class _Watcher:
     def close(self) -> None:
         self._program.detach(self)
         self.show(b"")
+
+
+def _instructions(dockerfile: str) -> list[str]:
+    """Its instructions, each on one line: continuation lines joined, comments left out."""
+    instructions: list[str] = []
+    pending = ""
+    for line in dockerfile.splitlines():
+        if not pending and (not line.strip() or line.lstrip().startswith("#")):
+            continue
+        if line.rstrip().endswith("\\"):
+            pending += line.rstrip()[:-1]
+            continue
+        instructions.append(" ".join((pending + line).split()))
+        pending = ""
+    if pending.strip():
+        instructions.append(" ".join(pending.split()))
+    return instructions

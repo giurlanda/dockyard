@@ -1,0 +1,22 @@
+{% extends "base.html" %}
+{% block title %}{{ t("images.title") }}{% endblock %}
+{% block header %}{% include "_user.html" %}{% endblock %}
+{% block content %}
+  <section class="panel" aria-labelledby="images">
+    <div class="panel-heading">
+      <h1 id="images">{{ t("images.heading") }}</h1>
+      <a class="button primary" href="/images/new">{{ t("images.new") }}</a>
+    </div>
+    <p class="muted">{{ t("images.explain") }}</p>
+    <ul class="projects">
+      {% for image in images %}
+        <li>
+          <a href="/images/{{ image.id }}">{{ t("images.base.label") if image.base else image.label }}</a>
+          {% include "_image_status.html" %}
+          <span class="muted repository">{{ t("images.base.description") if image.base else image.description }}</span>
+        </li>
+      {% endfor %}
+    </ul>
+    <p><a href="/">{{ t("notice.home") }}</a></p>
+  </section>
+{% endblock %}

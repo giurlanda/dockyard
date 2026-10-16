@@ -20,6 +20,7 @@ from starlette.responses import Response
 
 from ..accounts import User
 from ..git_credentials import GitCredentials
+from ..images import BASE_IMAGE, Images
 from ..projects import (
     GIB,
     MIN_CPUS,
@@ -54,6 +55,7 @@ class NewProject(BaseModel):
     cpus: float | None = None  # None: the most the Instance allows
     memory: int | None = None  # bytes. None: the most the Instance allows
     privileged: bool = False  # only for a User holding the permission
+    image: str = BASE_IMAGE  # the id of a ready Image
 
 
 class ProjectOut(BaseModel):
@@ -68,6 +70,7 @@ class ProjectOut(BaseModel):
     cpus: float
     memory: int  # bytes
     privileged: bool
+    image: str  # its id
 
     @classmethod
     def of(cls, project: Project) -> ProjectOut:
@@ -83,6 +86,7 @@ class ProjectOut(BaseModel):
             cpus=project.cpus,
             memory=project.memory,
             privileged=project.privileged,
+            image=project.image,
         )
 
 
@@ -104,7 +108,9 @@ class StatsOut(BaseModel):
         )
 
 
-def projects_routes(projects: Projects, git_credentials: GitCredentials, pages: Pages) -> APIRouter:
+def projects_routes(
+    projects: Projects, git_credentials: GitCredentials, images: Images, pages: Pages
+) -> APIRouter:
     router = APIRouter()
 
     conflicts = (Refusal.CLONING, Refusal.NOT_RUNNING, Refusal.ACTIVE_MAXIMUM)
@@ -135,6 +141,7 @@ def projects_routes(projects: Projects, git_credentials: GitCredentials, pages: 
         permission_mode: PermissionMode = PermissionMode.DEFAULT,
         cpus: str = "",  # "": the most the Instance allows
         memory: str = "",  # in GiB. "": the most the Instance allows
+        image: str = BASE_IMAGE,
         problem: str | None = None,
         status_code: int = 200,
     ) -> HTMLResponse:
@@ -155,6 +162,8 @@ def projects_routes(projects: Projects, git_credentials: GitCredentials, pages: 
             cpus=cpus or limits["max_cpus"],
             memory=memory or limits["max_memory"],
             limits=limits,
+            images=images.ready(),
+            image=image,
             problem=problem,
         )
 
@@ -182,6 +191,7 @@ def projects_routes(projects: Projects, git_credentials: GitCredentials, pages: 
                 cpus=new.cpus,
                 memory=new.memory,
                 privileged=new.privileged,
+                image=new.image,
             )
         except ProjectRefused as refusal:
             return refused(request, refusal)
@@ -248,6 +258,7 @@ def projects_routes(projects: Projects, git_credentials: GitCredentials, pages: 
         git_credential: str = "",
         cpus: str = "",
         memory: str = "",
+        image: str = BASE_IMAGE,
     ) -> HTMLResponse:
         return new_project_page(
             request,
@@ -258,6 +269,7 @@ def projects_routes(projects: Projects, git_credentials: GitCredentials, pages: 
             git_credential=git_credential,
             cpus=cpus,
             memory=memory,
+            image=image,
         )
 
     @router.post("/projects", response_model=None)
@@ -272,6 +284,7 @@ def projects_routes(projects: Projects, git_credentials: GitCredentials, pages: 
         cpus: Annotated[str, Form()] = "",  # "": the most the Instance allows
         memory: Annotated[str, Form()] = "",  # in GiB. "": the most the Instance allows
         privileged: Annotated[bool, Form()] = False,
+        image: Annotated[str, Form()] = BASE_IMAGE,
     ) -> Response:
         try:
             chosen_memory = _amount(memory, Refusal.MEMORY_OUT_OF_RANGE)
@@ -285,6 +298,7 @@ def projects_routes(projects: Projects, git_credentials: GitCredentials, pages: 
                 cpus=_amount(cpus, Refusal.CPUS_OUT_OF_RANGE),
                 memory=None if chosen_memory is None else round(chosen_memory * GIB),
                 privileged=privileged,
+                image=image,
             )
         except ProjectRefused as refusal:
             return new_project_page(
@@ -297,6 +311,7 @@ def projects_routes(projects: Projects, git_credentials: GitCredentials, pages: 
                 permission_mode=permission_mode,
                 cpus=cpus,
                 memory=memory,
+                image=image,
                 problem=f"project_refused.{refusal.reason}.body",
                 status_code=403 if refusal.reason == Refusal.PRIVILEGED_NOT_PERMITTED else 422,
             )
@@ -317,6 +332,7 @@ def projects_routes(projects: Projects, git_credentials: GitCredentials, pages: 
                 project=found,
                 clone=report,
                 git_credential=credential,
+                image=images.get(found.image),
             )
         if report is not None and report.state == CloneState.FAILED:
             return pages.render(
@@ -417,5 +433,6 @@ def _retry(report: CloneReport) -> str:
         "git_credential": report.git_credential or "",
         "cpus": "" if report.cpus is None else _number(report.cpus),
         "memory": "" if report.memory is None else _number(report.memory / GIB),
+        "image": report.image,
     }
     return "/projects/new?" + urlencode(filled)

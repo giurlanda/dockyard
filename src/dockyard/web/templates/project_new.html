@@ -52,6 +52,18 @@
         {% endif %}
         {% with provider=None %}{% include "_git_credential_risk.html" %}{% endwith %}
       </div>
+      <fieldset class="field images" aria-describedby="image-hint">
+        <legend>{{ t("project_new.image") }}</legend>
+        <p class="hint muted" id="image-hint">{{ t("project_new.image_hint") }}</p>
+        {% for offered in images %}
+          <label class="check">
+            <input type="radio" name="image" value="{{ offered.id }}"{{ " checked" if offered.id == image }}
+                   aria-describedby="image-{{ offered.id }}-hint">
+            {{ t("images.base.label") if offered.base else offered.label }}
+          </label>
+          <p class="hint muted" id="image-{{ offered.id }}-hint">{{ t("images.base.description") if offered.base else offered.description }}</p>
+        {% endfor %}
+      </fieldset>
       <fieldset class="field modes" aria-describedby="mode-hint">
         <legend>{{ t("project_new.permission_mode") }}</legend>
         <p class="hint muted" id="mode-hint">{{ t("project_new.permission_mode_hint") }}</p>

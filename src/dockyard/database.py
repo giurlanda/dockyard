@@ -94,6 +94,24 @@ MIGRATIONS = (
     ALTER TABLE projects ADD COLUMN privileged INTEGER NOT NULL DEFAULT 0
         CHECK (privileged IN (0, 1));
     """,
+    # Images an Administrator defines on top of the Base Image. log: what the build printed,
+    # recorded once it ended. A Project's image is NULL for the Base Image; an Image cannot be
+    # deleted while a Project uses it.
+    """
+    CREATE TABLE images (
+        id           TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(8)))),
+        label        TEXT NOT NULL,
+        description  TEXT NOT NULL,
+        instructions TEXT NOT NULL,
+        status       TEXT NOT NULL DEFAULT 'building'
+            CHECK (status IN ('building', 'ready', 'failed')),
+        failure      TEXT CHECK (failure IN ('build', 'claude_missing', 'root_user')),
+        log          TEXT NOT NULL DEFAULT '',
+        created_at   TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
+    );
+    ALTER TABLE projects ADD COLUMN image TEXT REFERENCES images (id);
+    CREATE INDEX projects_image ON projects (image);
+    """,
 )
 
 

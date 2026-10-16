@@ -20,6 +20,7 @@ from ..accounts import Accounts
 from ..database import Database
 from ..git_credentials import GitCredentials
 from ..identity import SigningKeys, identity_for
+from ..images import Images
 from ..projects import Projects
 from ..runtime import Runtime, RuntimeUnavailable
 from ..settings import Settings
@@ -28,6 +29,7 @@ from .claude_account import claude_account_routes, claude_account_status
 from .git_credentials import git_credentials_routes
 from .guard import CurrentUser, IdentityGuard, NotAdministrator
 from .i18n import LANGUAGE_COOKIE, Language
+from .images import images_routes
 from .pages import Pages, is_api
 from .projects import projects_routes
 from .users import users_routes
@@ -46,10 +48,12 @@ def create_app(
     accounts.bootstrap_first_administrator(settings.first_administrator_email)
     git_credentials = GitCredentials(database, settings.secret_key)
     projects = Projects(database, runtime, git_credentials, limits=settings.limits)
+    images = Images(database, runtime)
     try:
         projects.resume()
     except RuntimeUnavailable as error:
         log.warning("Cannot pick up the clones and Projects in progress: %s", error)
+    images.resume()
     pages = Pages()
 
     @asynccontextmanager
@@ -115,10 +119,11 @@ def create_app(
         return {"email": user.email, "role": user.role}
 
     app.include_router(claude_account_routes(runtime, projects, pages))
-    app.include_router(projects_routes(projects, git_credentials, pages))
+    app.include_router(projects_routes(projects, git_credentials, images, pages))
     app.include_router(git_credentials_routes(git_credentials, pages))
     app.include_router(users_routes(accounts, projects, runtime, pages))
     app.include_router(all_projects_routes(projects, pages))
+    app.include_router(images_routes(images, pages))
     app.mount("/static", StaticFiles(packages=[("dockyard.web", "static")]), name="static")
     return app
 

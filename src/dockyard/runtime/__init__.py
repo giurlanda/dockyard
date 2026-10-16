@@ -7,6 +7,7 @@ the same behaviour.
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from enum import StrEnum
 from typing import Protocol
@@ -45,6 +46,10 @@ class ProjectNotRunning(Exception):
     """The Project has nothing running to follow."""
 
 
+class ImageMissing(Exception):
+    """The Image has not been built, or it was removed."""
+
+
 class CloneState(StrEnum):
     RUNNING = "running"
     SUCCEEDED = "succeeded"
@@ -76,6 +81,14 @@ class GitToken:
 
     host: str
     token: str = field(repr=False)
+
+
+@dataclass(frozen=True)
+class ImageCheck:
+    """What a built Image runs as, and the Claude Code in it."""
+
+    uid: int | None  # of its default user; None when it cannot be told
+    claude: str | None  # what `claude --version` prints; None when Claude Code is missing
 
 
 @dataclass(frozen=True)
@@ -180,9 +193,11 @@ class Runtime(Protocol):
         cpus: float = PROJECT_CPUS,
         memory: int = PROJECT_MEMORY,
         privileged: bool = False,
+        image: str | None = None,
     ) -> None:
-        """(Re)create the Project's environment, which may use `cpus` CPUs and `memory` bytes
-        of RAM, and start its Remote Control Server in it.
+        """(Re)create the Project's environment from `image` (see build_image), or from the
+        Base Image when None; it may use `cpus` CPUs and `memory` bytes of RAM. Then start its
+        Remote Control Server in it.
 
         The environment is hardened (no capabilities, no new privileges), unless `privileged`:
         then it runs privileged, which equals root on the host. Either way it runs as the
@@ -261,4 +276,23 @@ class Runtime(Protocol):
     def remove_project(self, project: str, *, code: bool) -> None:
         """Remove everything the Project runs (its clone included), and its code and home only
         if asked."""
+        ...
+
+    def build_image(self, image: str, instructions: str, *, output: Callable[[str], None]) -> bool:
+        """Build the Image `image` from the Dockerfile `FROM <Base Image>`, `USER root`,
+        `instructions`, `USER <the non-root user>`, handing `output` what the build prints as it
+        prints it. Whether it succeeded: a failed build builds nothing.
+        """
+        ...
+
+    def check_image(self, image: str) -> ImageCheck:
+        """Run the built Image as it runs by default, and tell what it runs as and whether
+        Claude Code is in it.
+
+        Raises ImageMissing.
+        """
+        ...
+
+    def remove_image(self, image: str) -> None:
+        """Remove the built Image, if there is one. No Project may run it."""
         ...

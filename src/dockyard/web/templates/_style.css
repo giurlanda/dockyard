@@ -94,6 +94,19 @@ button.danger { border-color: var(--bad); color: var(--bad); }
   width: 100%; font: inherit; padding: 6px 10px; border-radius: 6px;
   border: 1px solid var(--line); background: var(--bg); color: var(--ink);
 }
+.field textarea {
+  width: 100%; font: inherit; padding: 6px 10px; border-radius: 6px; resize: vertical;
+  border: 1px solid var(--line); background: var(--bg); color: var(--ink);
+}
+.field textarea.code-input, .instructions {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 13px;
+}
+.instructions {
+  margin: 0; padding: 10px; border-radius: 8px; border: 1px solid var(--line);
+  background: var(--bg); white-space: pre-wrap; overflow-wrap: anywhere;
+}
+.images .hint { margin: 0 0 8px 24px; }
+.images > .hint:first-of-type { margin-left: 0; }
 .field .check { font-weight: normal; }
 .hint { font-size: 13px; margin: 4px 0 0; }
 .resources > .hint { margin: 0 0 8px; }

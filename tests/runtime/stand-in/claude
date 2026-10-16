@@ -12,6 +12,8 @@
 # Remote Control environment by that directory in the Claude config. It reports what it sees
 # from inside the Project's environment, so the suite can check how it runs.
 #
+# `claude --version` prints a version, as Dockyard's check of a built Image asks it to.
+#
 # The in-memory fake Runtime (dockyard.runtime.fake) simulates exactly this program.
 set -u
 
@@ -83,5 +85,6 @@ remote_control() {
 case "${1:-}" in
   auth) [ "$*" = "auth login" ] && login ;;
   remote-control) remote_control "$@" ;;
+  --version) echo "0.0.0 (stand-in for Claude Code)" ;;
   *) echo "stand-in claude: unsupported: $*" >&2; exit 2 ;;
 esac

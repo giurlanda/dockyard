@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import http.client
+import io
 import os
 import secrets
 import socket
@@ -30,6 +31,8 @@ from . import (
     Clone,
     CloneState,
     GitToken,
+    ImageCheck,
+    ImageMissing,
     LoginNotRunning,
     ProjectMissing,
     ProjectNotRunning,
@@ -40,6 +43,7 @@ from . import (
 )
 
 UID = 1000  # "ubuntu", the Base Image's non-root user
+NON_ROOT_USER = "ubuntu"
 HOME = "/home/ubuntu"
 CLAUDE_CONFIG_DIR = "/home/ubuntu/.claude"  # CLAUDE_CONFIG_DIR in the Base Image
 CREDENTIALS = f"{CLAUDE_CONFIG_DIR}/.credentials.json"
@@ -135,9 +139,14 @@ TRUST_PROMPT_LOG_LINES = 50
 KIND_LABEL = "dockyard.kind"
 USER_LABEL = "dockyard.user"
 PROJECT_LABEL = "dockyard.project"
+IMAGE_LABEL = "dockyard.image"
 LOGIN_ENVIRONMENT = "login-environment"
 CLONE = "clone"
 PROJECT_ENVIRONMENT = "project"
+IMAGE = "image"
+IMAGE_CHECK = "image-check"
+# What check_image runs in an Image, as its default user. sh: an Image may lack bash.
+CHECK_IMAGE_SCRIPT = 'echo "uid: $(id -u)"; echo "claude: $(claude --version 2>/dev/null)"'
 # Every Project environment is on this network, and nothing else: inter-container traffic is off,
 # and the host firewall knows its bridge by its interface name.
 PROJECTS_NETWORK = "dockyard-projects"
@@ -323,6 +332,7 @@ class DockerRuntime:
         cpus: float = PROJECT_CPUS,
         memory: int = PROJECT_MEMORY,
         privileged: bool = False,
+        image: str | None = None,
     ) -> None:
         path = project_path(project)
         with self._docker():
@@ -336,7 +346,7 @@ class DockerRuntime:
             self._trust(user, claude_config, path)
             self.stop_project(project)
             environment = self._client.containers.create(
-                self._base_image,
+                _image_tag(image) if image else self._base_image,
                 # Never the working directory: that would reset the volume's root to root:root.
                 [
                     *["bash", "-c", 'cd -- "$1" && shift && exec claude "$@"', "dockyard", path],
@@ -514,6 +524,47 @@ class DockerRuntime:
                     with suppress(NotFound):
                         self._client.volumes.get(volume).remove(force=True)
 
+    def build_image(self, image: str, instructions: str, *, output: Callable[[str], None]) -> bool:
+        dockerfile = f"FROM {self._base_image}\nUSER root\n{instructions}\nUSER {NON_ROOT_USER}\n"
+        succeeded = True
+        with self._docker():
+            for step in self._client.api.build(
+                fileobj=io.BytesIO(dockerfile.encode()),
+                tag=_image_tag(image),
+                labels={KIND_LABEL: IMAGE, IMAGE_LABEL: image},
+                pull=False,  # the Base Image is local
+                rm=True,
+                forcerm=True,  # no container left behind by a failed step
+                decode=True,
+            ):
+                if "stream" in step:
+                    output(step["stream"])
+                elif "error" in step:
+                    output(f"{step['error'].rstrip()}\n")
+                    succeeded = False
+        return succeeded
+
+    def check_image(self, image: str) -> ImageCheck:
+        with self._docker():
+            try:
+                self._client.images.get(_image_tag(image))
+            except NotFound as error:
+                raise ImageMissing(image) from error
+            _, printed = self._job(
+                ["sh", "-c", CHECK_IMAGE_SCRIPT],
+                image=_image_tag(image),
+                labels={KIND_LABEL: IMAGE_CHECK, IMAGE_LABEL: image},
+            )
+        reported = dict(line.partition(": ")[::2] for line in printed.splitlines())
+        uid = reported.get("uid", "")
+        return ImageCheck(
+            uid=int(uid) if uid.isdigit() else None, claude=reported.get("claude") or None
+        )
+
+    def remove_image(self, image: str) -> None:
+        with self._docker(), suppress(NotFound):
+            self._client.images.remove(_image_tag(image), force=True)
+
     def _running_environment(self, project: str) -> Container:
         """Raises ProjectNotRunning."""
         environments = self._project_containers(project, PROJECT_ENVIRONMENT)
@@ -637,12 +688,20 @@ class DockerRuntime:
 
     def _run_job(self, command: list[str], **options: Any) -> int:
         """Run a short command in the Base Image, offline, and return its exit status."""
+        return self._job(command, **options)[0]
+
+    def _job(
+        self, command: list[str], *, image: str | None = None, **options: Any
+    ) -> tuple[int, str]:
+        """Run a short command offline, in `image` or else the Base Image: its exit status, and
+        what it printed."""
         job = self._client.containers.create(
-            self._base_image, command, network_disabled=True, **{**HARDENING, **options}
+            image or self._base_image, command, network_disabled=True, **{**HARDENING, **options}
         )
         try:
             job.start()
-            return int(job.wait(timeout=60)["StatusCode"])
+            exit_status = int(job.wait(timeout=60)["StatusCode"])
+            return exit_status, job.logs().decode(errors="replace")
         finally:
             job.remove(force=True)
 
@@ -653,8 +712,8 @@ class DockerRuntime:
             yield
         except ImageNotFound as error:
             raise RuntimeUnavailable(
-                f"The Base Image {self._base_image} is not on this Docker host. "
-                "Build it with: docker compose build"
+                f"An image is not on this Docker host ({error}). If it is the Base Image "
+                f"{self._base_image}, build it with: docker compose build"
             ) from error
         except (DockerException, requests.RequestException) as error:
             raise RuntimeUnavailable(f"Docker failed: {error}") from error
@@ -809,6 +868,10 @@ def _code_volume(project: str) -> str:
 
 def _home_volume(project: str) -> str:
     return f"dockyard-home-{project}"
+
+
+def _image_tag(image: str) -> str:
+    return f"dockyard-image-{image}"
 
 
 def _labels(kind: str, user: str) -> dict[str, str]:

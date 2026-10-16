@@ -1,0 +1,35 @@
+{% extends "base.html" %}
+{% block title %}{{ t("image_new.title") }}{% endblock %}
+{% block header %}{% include "_user.html" %}{% endblock %}
+{% block content %}
+  <section class="panel">
+    <h1>{{ t("image_new.title") }}</h1>
+    {% if problem %}<p class="outcome bad" role="alert">{{ t(problem) }}</p>{% endif %}
+    <form class="fields" method="post" action="/images">
+      <div class="field">
+        <label for="label">{{ t("image_new.label") }}</label>
+        <input id="label" name="label" value="{{ label }}" maxlength="60" autocomplete="off"
+               aria-describedby="label-hint" required>
+        <p class="hint muted" id="label-hint">{{ t("image_new.label_hint") }}</p>
+      </div>
+      <div class="field">
+        <label for="description">{{ t("image_new.description") }}</label>
+        <textarea id="description" name="description" rows="2" maxlength="500"
+                  aria-describedby="description-hint">{{ description }}</textarea>
+        <p class="hint muted" id="description-hint">{{ t("image_new.description_hint") }}</p>
+      </div>
+      <div class="field">
+        <label for="instructions">{{ t("image_new.instructions") }}</label>
+        <p class="hint muted" id="instructions-hint">{{ t("image_new.instructions_hint") }}</p>
+        <textarea id="instructions" name="instructions" class="code-input" rows="8"
+                  autocapitalize="off" autocorrect="off" spellcheck="false"
+                  placeholder="RUN apt-get update &amp;&amp; apt-get install -y ripgrep"
+                  aria-describedby="instructions-hint" required>{{ instructions }}</textarea>
+      </div>
+      <div class="actions">
+        <button class="primary">{{ t("image_new.create") }}</button>
+        <a href="/images">{{ t("images.back") }}</a>
+      </div>
+    </form>
+  </section>
+{% endblock %}
