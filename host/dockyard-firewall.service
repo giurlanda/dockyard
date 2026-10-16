@@ -1,0 +1,26 @@
+# Applies the Dockyard host firewall at boot and again whenever Docker restarts, each time just
+# before Docker starts: Docker restarts running Projects at once, so they never run without it.
+# Docker keeps the rules: it creates DOCKER-USER only when missing and never empties it.
+#
+#   sudo install -m 755 host/dockyard-firewall.sh /usr/local/sbin/dockyard-firewall
+#   sudo install -m 644 host/dockyard-firewall.service /etc/systemd/system/
+#   sudo systemctl daemon-reload && sudo systemctl enable --now dockyard-firewall
+#
+# The allowed IPs (DOCKYARD_ALLOWED_IPS) come from the Instance configuration: the .env next to
+# compose.yaml. If Dockyard lives elsewhere than /opt/dockyard, change EnvironmentFile below.
+# After changing the allowed IPs: sudo systemctl restart dockyard-firewall
+
+[Unit]
+Description=Dockyard host firewall: keep Projects off the LAN and the host
+Before=docker.service
+# Restarted with Docker, so the rules are applied again on every Docker start.
+PartOf=docker.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+EnvironmentFile=-/opt/dockyard/.env
+ExecStart=/usr/local/sbin/dockyard-firewall
+
+[Install]
+WantedBy=multi-user.target docker.service

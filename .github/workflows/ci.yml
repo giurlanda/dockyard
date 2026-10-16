@@ -43,3 +43,13 @@ jobs:
       - run: uv sync --locked
       - run: uv run playwright install --with-deps chromium
       - run: uv run pytest tests/e2e
+
+  host-firewall:
+    name: Host firewall
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: astral-sh/setup-uv@v6
+      - run: uv sync --locked
+      # The tests change the runner's firewall, network namespaces and systemd units: root only.
+      - run: sudo DOCKYARD_FIREWALL_TESTS=1 .venv/bin/pytest tests/host
