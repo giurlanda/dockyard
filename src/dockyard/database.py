@@ -112,6 +112,16 @@ MIGRATIONS = (
     ALTER TABLE projects ADD COLUMN image TEXT REFERENCES images (id);
     CREATE INDEX projects_image ON projects (image);
     """,
+    # build: the build of the Image that Projects start from, NULL until one is ready; each
+    # build has its own name, and those made before were named after their Image. base_build:
+    # the Base Image its last build started from, to build it again once the Base Image changes.
+    # retired_builds: builds no longer started from, removed once no Project runs them.
+    """
+    ALTER TABLE images ADD COLUMN build TEXT;
+    ALTER TABLE images ADD COLUMN base_build TEXT;
+    UPDATE images SET build = id WHERE status = 'ready';
+    CREATE TABLE retired_builds (build TEXT PRIMARY KEY);
+    """,
 )
 
 

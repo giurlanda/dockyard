@@ -18,6 +18,13 @@
       <p class="outcome good">{{ t("image.ready") }}</p>
     {% else %}
       <p class="warning">{{ t("image.failure." ~ image.failure) }}</p>
+      {% if image.build %}<p class="warning">{{ t("image.previous_build") }}</p>{% endif %}
+    {% endif %}
+    {% if not image.base and image.status != "building" %}
+      <form method="post" action="/images/{{ image.id }}/rebuild">
+        <p class="hint muted">{{ t("image.rebuild.explain") }}</p>
+        <div class="actions"><button>{{ t("image.rebuild.button") }}</button></div>
+      </form>
     {% endif %}
     <p><a href="/images">{{ t("images.back") }}</a></p>
   </section>

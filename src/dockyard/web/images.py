@@ -1,4 +1,5 @@
-"""Images: Administrators define, follow and delete them; every User lists those ready to pick.
+"""Images: Administrators define, follow, rebuild and delete them; every User lists those ready
+to pick.
 
 Every route here is for Administrators only, except the list of Images, where a User sees only the
 ready ones.
@@ -15,8 +16,10 @@ from starlette.responses import Response
 
 from ..accounts import Role, User
 from ..images import (
+    BaseImageNotBuilt,
     BaseImageUndeletable,
     Image,
+    ImageBuilding,
     ImageInUse,
     ImageRefused,
     Images,
@@ -139,6 +142,20 @@ def images_routes(images: Images, pages: Pages) -> APIRouter:
     def get_image(_: CurrentAdministrator, image: str) -> ImageDetailsOut:
         return ImageDetailsOut.of_details(found(image))
 
+    @router.post("/api/images/{image}/rebuild", status_code=202, response_model=ImageDetailsOut)
+    def rebuild_image(request: Request, _: CurrentAdministrator, image: str) -> object:
+        try:
+            rebuilt = images.rebuild(image)
+        except BaseImageNotBuilt:
+            error = "base_image_not_built"
+            return pages.problem(request, error, key=error, status_code=409)
+        except ImageBuilding:
+            error = "building"
+            return pages.problem(request, error, key="image_building", status_code=409)
+        if rebuilt is None:
+            raise HTTPException(404)
+        return ImageDetailsOut.of_details(rebuilt)
+
     @router.delete("/api/images/{image}", status_code=204)
     def delete_image(request: Request, _: CurrentAdministrator, image: str) -> Response:
         try:
@@ -191,6 +208,21 @@ def images_routes(images: Images, pages: Pages) -> APIRouter:
     @router.get("/images/{image}", response_class=HTMLResponse)
     def image_details(request: Request, user: CurrentAdministrator, image: str) -> HTMLResponse:
         return image_page(request, user, found(image))
+
+    @router.post("/images/{image}/rebuild", response_model=None)
+    def rebuild_from_page(request: Request, user: CurrentAdministrator, image: str) -> Response:
+        shown = found(image)
+        try:
+            rebuilt = images.rebuild(image)
+        except BaseImageNotBuilt:
+            problem = "base_image_not_built.body"
+            return image_page(request, user, shown, problem=problem, status_code=409)
+        except ImageBuilding:
+            problem = "image_building.body"
+            return image_page(request, user, shown, problem=problem, status_code=409)
+        if rebuilt is None:
+            raise HTTPException(404)
+        return RedirectResponse(f"/images/{image}", status_code=303)
 
     @router.post("/images/{image}/delete", response_model=None)
     def delete_from_page(request: Request, user: CurrentAdministrator, image: str) -> Response:

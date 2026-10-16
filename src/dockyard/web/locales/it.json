@@ -291,5 +291,21 @@
   "project_refused.image_not_available.body": "Questa Immagine non può essere scelta: non è pronta, oppure è stata eliminata. Scegli una delle Immagini proposte nel modulo del nuovo Progetto.",
   "project_new.image": "Immagine",
   "project_new.image_hint": "Ciò con cui lavora il Claude Code del Progetto: l'Immagine base, o una che un Amministratore ha preparato con altri strumenti.",
-  "project.image": "Immagine"
+  "project.image": "Immagine",
+  "project_refused.not_stopped.body": "Prima ferma questo Progetto: la sua Immagine può cambiare solo mentre è fermo.",
+  "base_image_not_built.title": "L'Immagine base non è costruita da Dockyard",
+  "base_image_not_built.body": "L'Immagine base è fornita con Dockyard: si aggiorna insieme a Dockyard (docker compose pull), e ogni altra Immagine viene poi ricostruita su di essa.",
+  "image_building.title": "Costruzione già in corso",
+  "image_building.body": "Questa Immagine è già in costruzione: aspetta che la costruzione finisca.",
+  "projects.update_available": "Aggiornamento disponibile",
+  "project.update_available": "È pronta una nuova costruzione della sua Immagine. Riavvialo per passare alla nuova costruzione: codice e cartella home restano.",
+  "project.change_image.heading": "Cambia Immagine",
+  "project.change_image.explain": "Il Progetto parte nell'Immagine che scegli dal prossimo avvio in poi, e mantiene il codice e la cartella home.",
+  "project.change_image.button": "Cambia Immagine",
+  "project.change_image.stop_first": "Ferma il Progetto per cambiarne l'Immagine: codice e cartella home restano.",
+  "image.previous_build": "I Progetti che usano questa Immagine continuano a partire dalla sua costruzione precedente, che ha superato la verifica, finché una nuova non la supera.",
+  "image.rebuild.explain": "Costruiscila di nuovo dalle sue istruzioni, sopra l'Immagine base attuale. I Progetti continuano a partire dalla costruzione che hanno finché la nuova non è pronta.",
+  "image.rebuild.button": "Costruisci di nuovo",
+  "administration.failed_images": "Non è stato possibile costruire queste Immagini: gli Utenti non possono sceglierle. Apri ciascuna per vedere perché.",
+  "administration.failed_images_list": "Immagini la cui costruzione è fallita"
 }

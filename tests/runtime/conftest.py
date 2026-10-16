@@ -7,6 +7,7 @@ and runs the Base Image built from images/base, with a stand-in for Claude Code
 
 from __future__ import annotations
 
+import io
 import secrets
 import subprocess
 import threading
@@ -126,7 +127,8 @@ def make_runtime(request: pytest.FixtureRequest) -> MakeRuntime:
     proxy = request.getfixturevalue("socket_proxy")
 
     def make(**settings: Any) -> Runtime:
-        return DockerRuntime(docker.DockerClient(base_url=proxy), base_image=image, **settings)
+        settings = {"base_image": image, **settings}
+        return DockerRuntime(docker.DockerClient(base_url=proxy), **settings)
 
     return make
 
@@ -173,6 +175,41 @@ def new_image(request: pytest.FixtureRequest) -> Iterator[Callable[[], str]]:
             for found in daemon.images.list(filters={"label": f"dockyard.image={image}"}):
                 with suppress(NotFound, APIError):
                     daemon.images.remove(str(found.id), force=True)
+
+
+RebuildBase = Callable[[], None]
+
+
+@pytest.fixture
+def own_base(
+    request: pytest.FixtureRequest, make_runtime: MakeRuntime
+) -> Iterator[tuple[Runtime, RebuildBase]]:
+    """A Runtime with a Base Image of its own, and what builds that Base Image again, as a new
+    release of Dockyard's Base Image would."""
+    if request.node.callspec.params["make_runtime"] == "fake":
+        fake = make_runtime()
+        assert isinstance(fake, FakeRuntime)
+        yield fake, fake.rebuild_base
+        return
+    daemon: docker.DockerClient = request.getfixturevalue("docker_daemon")
+    contract_image: str = request.getfixturevalue("contract_image")
+    repository, tag = "dockyard-base", f"contract-{secrets.token_hex(4)}"
+    daemon.images.get(contract_image).tag(repository, tag)
+    built: list[str] = []
+
+    def rebuild() -> None:
+        dockerfile = (
+            f"FROM {contract_image}\nLABEL dockyard.contract-rebuild={secrets.token_hex(4)}\n"
+        )
+        image, _ = daemon.images.build(
+            fileobj=io.BytesIO(dockerfile.encode()), tag=f"{repository}:{tag}", rm=True
+        )
+        built.append(str(image.id))
+
+    yield make_runtime(base_image=f"{repository}:{tag}"), rebuild
+    for image in [f"{repository}:{tag}", *built]:
+        with suppress(NotFound, APIError):  # still used by a container being removed
+            daemon.images.remove(image, force=True)
 
 
 def new_project() -> str:

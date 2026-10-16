@@ -11,6 +11,14 @@
         <a class="button" href="/images">{{ t("administration.images") }}</a>
       </div>
       <p class="muted">{{ t("administration.explain") }}</p>
+      {% if failed_images %}
+        <div class="warning" role="alert">
+          <p>{{ t("administration.failed_images") }}</p>
+          <ul class="used-by" aria-label="{{ t('administration.failed_images_list') }}">
+            {% for image in failed_images %}<li><a href="/images/{{ image.id }}">{{ image.label }}</a></li>{% endfor %}
+          </ul>
+        </div>
+      {% endif %}
     </section>
   {% endif %}
   <section class="panel" aria-labelledby="claude-account">

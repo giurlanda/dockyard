@@ -195,9 +195,9 @@ class Runtime(Protocol):
         privileged: bool = False,
         image: str | None = None,
     ) -> None:
-        """(Re)create the Project's environment from `image` (see build_image), or from the
-        Base Image when None; it may use `cpus` CPUs and `memory` bytes of RAM. Then start its
-        Remote Control Server in it.
+        """(Re)create the Project's environment from the build `image` (see build_image), or
+        from the Base Image as it is now when None; it may use `cpus` CPUs and `memory` bytes of
+        RAM. Then start its Remote Control Server in it.
 
         The environment is hardened (no capabilities, no new privileges), unless `privileged`:
         then it runs privileged, which equals root on the host. Either way it runs as the
@@ -278,21 +278,37 @@ class Runtime(Protocol):
         if asked."""
         ...
 
+    def project_outdated(self, project: str, image: str | None) -> bool:
+        """Whether the Project's environment runs an older build than the build `image` (see
+        build_image), or than the Base Image as it is now when None: it moves to it when it
+        starts again. False when it has no environment."""
+        ...
+
+    def base_build(self) -> str:
+        """The Base Image as it is now: a value that changes every time it is built again, or
+        pulled in a newer release, and only then.
+
+        Raises RuntimeUnavailable when it is not there.
+        """
+        ...
+
     def build_image(self, image: str, instructions: str, *, output: Callable[[str], None]) -> bool:
-        """Build the Image `image` from the Dockerfile `FROM <Base Image>`, `USER root`,
-        `instructions`, `USER <the non-root user>`, handing `output` what the build prints as it
-        prints it. Whether it succeeded: a failed build builds nothing.
+        """Build `image`, one build of an Image, named by Dockyard (each build has its own
+        name), from the Dockerfile `FROM <Base Image>`, `USER root`, `instructions`,
+        `USER <the non-root user>`, handing `output` what the build prints as it prints it.
+        Whether it succeeded: a failed build builds nothing.
         """
         ...
 
     def check_image(self, image: str) -> ImageCheck:
-        """Run the built Image as it runs by default, and tell what it runs as and whether
+        """Run the build `image` as it runs by default, and tell what it runs as and whether
         Claude Code is in it.
 
         Raises ImageMissing.
         """
         ...
 
-    def remove_image(self, image: str) -> None:
-        """Remove the built Image, if there is one. No Project may run it."""
+    def remove_image(self, image: str) -> bool:
+        """Remove the build `image`, unless a Project environment runs it. Whether it is gone
+        (or was never there)."""
         ...

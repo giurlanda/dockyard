@@ -16,7 +16,7 @@ from urllib.parse import urlsplit
 from .accounts import RemovedUser, User
 from .database import Database
 from .git_credentials import GitCredentials
-from .images import BASE_IMAGE, ImageStatus
+from .images import BASE_IMAGE
 from .providers import Provider
 from .runtime import (
     PROJECT_CPUS,
@@ -124,6 +124,7 @@ class Refusal(StrEnum):
     IMAGE_NOT_AVAILABLE = "image_not_available"
     CLONING = "cloning"
     NOT_RUNNING = "not_running"
+    NOT_STOPPED = "not_stopped"
 
 
 class ProjectRefused(Exception):
@@ -196,6 +197,9 @@ class Project:
     # holds the permission to create Privileged Projects.
     privileged: bool = False
     image: str = BASE_IMAGE  # the id of the Image its environment runs
+    # It runs an older build of its Image than the one it would start from now: it moves to the
+    # newer one when it starts again.
+    update_available: bool = False
 
 
 @dataclass(frozen=True)
@@ -416,6 +420,31 @@ class Projects:
         self._stop(project)
         return self.get(owner, project)
 
+    def change_image(self, owner: User, project: str, image: str) -> Project | None:
+        """Have the stopped Project start in `image`, which must be ready, from its next start
+        on; its code and home stay. None if not found.
+
+        Raises ProjectRefused, RuntimeUnavailable.
+        """
+        if self._row(owner, project) is None:
+            return None
+        if not self._image_ready(image):
+            raise ProjectRefused(Refusal.IMAGE_NOT_AVAILABLE)
+        if self._runtime.project_status(project) != ProjectStatus.STOPPED:
+            raise ProjectRefused(Refusal.NOT_STOPPED)
+        try:
+            with self._db.transaction() as conn:
+                # Not if it was started meanwhile: it runs, or waits to, in the Image it had.
+                changed = conn.execute(
+                    "UPDATE projects SET image = ? WHERE id = ? AND should_run = 0",
+                    (None if image == BASE_IMAGE else image, project),
+                ).rowcount
+        except sqlite3.IntegrityError as error:  # the Image was deleted meanwhile
+            raise ProjectRefused(Refusal.IMAGE_NOT_AVAILABLE) from error
+        if not changed:
+            raise ProjectRefused(Refusal.NOT_STOPPED)
+        return self.get(owner, project)
+
     def stop_any(self, project: str) -> OwnedProject | None:
         """Stop any Project on the Instance, as its owner would: for Administrators only. None
         if not found.
@@ -633,7 +662,7 @@ class Projects:
                         cpus=min(row["cpus"], self.limits.max_cpus),
                         memory=min(row["memory"], self.limits.max_memory),
                         privileged=bool(row["privileged"]),
-                        image=row["image"],
+                        image=_build_to_start(row),
                     )
                 if row["git_credential"]:
                     start = self._runtime.project_starts().get(row["id"])
@@ -842,8 +871,8 @@ class Projects:
         if image == BASE_IMAGE:
             return True
         with self._db.transaction() as conn:
-            row = conn.execute("SELECT status FROM images WHERE id = ?", (image,)).fetchone()
-        return bool(row and row["status"] == ImageStatus.READY)
+            row = conn.execute("SELECT build FROM images WHERE id = ?", (image,)).fetchone()
+        return bool(row and row["build"])  # it passed its check: even if built again since
 
     def _permitted(self, owner: str) -> bool:
         """Whether the owner holds the permission to create Privileged Projects."""
@@ -870,6 +899,12 @@ class Projects:
             status = Status.WAITING if row["should_run"] else Status.STOPPED
         else:
             status = _STATUS[found]
+        # Its Image always has a build: a Project only ever gets a ready one.
+        outdated = (
+            found in _HAS_ENVIRONMENT
+            and not (row["image"] and not row["build"])
+            and self._runtime.project_outdated(row["id"], row["build"])
+        )
         return Project(
             id=row["id"],
             name=row["name"],
@@ -883,12 +918,17 @@ class Projects:
             memory=row["memory"],
             privileged=bool(row["privileged"]),
             image=row["image"] or BASE_IMAGE,
+            update_available=outdated,
         )
 
 
+# What has an environment, which may run an older build than the Project would start from now.
+_HAS_ENVIRONMENT = (ProjectStatus.RUNNING, ProjectStatus.TRUST_PROMPT, ProjectStatus.FAILED)
+# build: the build of its Image it starts from, NULL for the Base Image.
 _COLUMNS = (
     "id, name, repository, provider, visibility, permission_mode, should_run, git_credential,"
-    " cpus, memory, privileged, image"
+    " cpus, memory, privileged, image,"
+    " (SELECT build FROM images WHERE images.id = projects.image) AS build"
 )
 # Projects with their owner's email, as Administrators see them.
 _OWNED = (
@@ -898,6 +938,19 @@ _OWNED = (
 # How many active Projects an owner (the parameter) has: those that should run, whether they
 # run, wait for a Claude Account, keep failing or are still being cloned.
 _ACTIVE = "SELECT count(*) FROM projects WHERE owner = ? AND should_run = 1"
+
+
+def _build_to_start(row: sqlite3.Row) -> str | None:
+    """The build the Project starts from: of its Image, or None for the Base Image.
+
+    Raises RuntimeUnavailable when its Image has none, which a ready Image always has.
+    """
+    if row["image"] is None:
+        return None
+    if row["build"] is None:
+        raise RuntimeUnavailable(f"Image {row['image']} has no build to start from.")
+    build: str = row["build"]
+    return build
 
 
 def _readable(output: str) -> str:

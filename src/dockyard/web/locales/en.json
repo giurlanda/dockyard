@@ -291,5 +291,21 @@
   "project_refused.image_not_available.body": "This Image cannot be picked: it is not ready, or it was deleted. Pick one of the Images offered on the new Project form.",
   "project_new.image": "Image",
   "project_new.image_hint": "What the Project's Claude Code has to work with: the Base Image, or one an Administrator prepared with more tools.",
-  "project.image": "Image"
+  "project.image": "Image",
+  "project_refused.not_stopped.body": "Stop this Project first: its Image can change only while it is stopped.",
+  "base_image_not_built.title": "The Base Image is not built by Dockyard",
+  "base_image_not_built.body": "The Base Image ships with Dockyard: it is updated with Dockyard itself (docker compose pull), and every other Image is then built again on top of it.",
+  "image_building.title": "Already building",
+  "image_building.body": "This Image is being built already: wait until its build ends.",
+  "projects.update_available": "Update available",
+  "project.update_available": "A newer build of its Image is ready. Restart it to move to the newer build: its code and home folder stay.",
+  "project.change_image.heading": "Change Image",
+  "project.change_image.explain": "The Project starts in the Image you pick from its next start on, and keeps its code and home folder.",
+  "project.change_image.button": "Change Image",
+  "project.change_image.stop_first": "Stop the Project to change its Image: its code and home folder stay.",
+  "image.previous_build": "Projects using this Image keep starting from its previous build, which passed its check, until a new build does.",
+  "image.rebuild.explain": "Build it again from its instructions, on top of the Base Image as it is now. Projects keep starting from the build they have until the new one is ready.",
+  "image.rebuild.button": "Build again",
+  "administration.failed_images": "These Images failed to build: Users cannot pick them. Open each one to see why.",
+  "administration.failed_images_list": "Images that failed to build"
 }

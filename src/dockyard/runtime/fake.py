@@ -56,6 +56,7 @@ WRITE_FILE = re.compile(r"RUN echo (?P<text>\S+) > (?P<path>/\S+)")
 REMOVE_CLAUDE = re.compile(r"RUN rm (-f )?/usr/local/bin/claude")
 CHANGE_UID = re.compile(r"RUN usermod --non-unique --uid (?P<uid>\d+) ubuntu")
 FAIL = "RUN false"
+FIRST_INSTRUCTION = 3  # the step of the first build instruction: after FROM and USER root
 
 
 class FakeRuntime:
@@ -76,6 +77,8 @@ class FakeRuntime:
         self._projects: dict[str, _Project] = {}
         self._clones_paused = False
         self._images: dict[str, _Image] = {}
+        self._base_builds = 1  # how many times the Base Image was built
+        self._builds_failing = False
         self._builds_resumed = threading.Event()  # cleared while builds are paused
         self._builds_resumed.set()
 
@@ -107,6 +110,25 @@ class FakeRuntime:
             yield
         finally:
             self._builds_resumed.set()
+
+    @contextmanager
+    def builds_failing(self) -> Iterator[None]:
+        """Builds fail meanwhile, as when a package mirror their instructions use is down."""
+        self._builds_failing = True
+        try:
+            yield
+        finally:
+            self._builds_failing = False
+
+    def rebuild_base(self) -> None:
+        """The Base Image is built again, as a new release of it would be."""
+        with self._lock:
+            self._base_builds += 1
+
+    def builds(self) -> set[str]:
+        """The builds of Images there are."""
+        with self._lock:
+            return set(self._images)
 
     @contextmanager
     def unavailable(self) -> Iterator[None]:
@@ -280,6 +302,7 @@ class FakeRuntime:
             if image is not None and image not in self._images:
                 raise RuntimeUnavailable(f"The image of {image} is not on this Docker host.")
             found.files = dict(self._images[image].files) if image else {}
+            found.build = image or self._base()
             found.privileged = privileged
             self._trusted.setdefault(user, set()).add(project_path(project))
             found.command = (
@@ -379,6 +402,19 @@ class FakeRuntime:
         if server:
             server.end()
 
+    def project_outdated(self, project: str, image: str | None) -> bool:
+        self.check_reachable()
+        with self._lock:
+            found = self._projects.get(project)
+            if not found or not found.server:
+                return False
+            return found.build != (image or self._base())
+
+    def base_build(self) -> str:
+        self.check_reachable()
+        with self._lock:
+            return self._base()
+
     def build_image(self, image: str, instructions: str, *, output: Callable[[str], None]) -> bool:
         self.check_reachable()
         steps = [f"FROM {BASE_IMAGE}", "USER root", *_instructions(instructions), "USER ubuntu"]
@@ -387,7 +423,7 @@ class FakeRuntime:
             output(f"Step {number}/{len(steps)} : {step}\n")
             if number == 1:
                 self._builds_resumed.wait()
-            if step == FAIL:
+            if step == FAIL or (number == FIRST_INSTRUCTION and self._builds_failing):
                 output("The command '/bin/sh -c false' returned a non-zero code: 1\n")
                 return False
             if written := WRITE_FILE.fullmatch(step):
@@ -409,10 +445,16 @@ class FakeRuntime:
             raise ImageMissing(image)
         return ImageCheck(uid=built.uid, claude=built.claude)
 
-    def remove_image(self, image: str) -> None:
+    def remove_image(self, image: str) -> bool:
         self.check_reachable()
         with self._lock:
+            if any(found.server and found.build == image for found in self._projects.values()):
+                return False
             self._images.pop(image, None)
+        return True
+
+    def _base(self) -> str:
+        return f"base-build-{self._base_builds}"
 
     def _running_server(self, project: str) -> _Server:
         """Raises ProjectNotRunning."""
@@ -520,6 +562,7 @@ class _Project:
     launches: int = 0  # how many times its environment started, by Dockyard or by itself
     git_token: GitToken | None = None  # what its tmpfs holds, written since it last started
     files: dict[str, str] = field(default_factory=dict)  # what its Image's instructions wrote
+    build: str = ""  # the build its environment runs: of an Image, or of the Base Image
 
 
 @dataclass

@@ -16,7 +16,7 @@ from fastapi.staticfiles import StaticFiles
 from starlette.exceptions import HTTPException
 from starlette.responses import Response
 
-from ..accounts import Accounts
+from ..accounts import Accounts, Role
 from ..database import Database
 from ..git_credentials import GitCredentials
 from ..identity import SigningKeys, identity_for
@@ -59,8 +59,10 @@ def create_app(
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         projects.keep_git_credentials()
+        images.keep_current()
         yield
         projects.close()
+        images.close()
 
     app = FastAPI(
         title="Dockyard", docs_url=None, redoc_url=None, openapi_url=None, lifespan=lifespan
@@ -104,6 +106,7 @@ def create_app(
             claude_account=claude_account_status(runtime, user),
             projects=projects.list(user),
             git_credentials=git_credentials.list(user),
+            failed_images=images.failed() if user.role == Role.ADMINISTRATOR else [],
         )
 
     @app.post("/language")

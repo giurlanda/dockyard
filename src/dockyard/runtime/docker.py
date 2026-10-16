@@ -524,6 +524,21 @@ class DockerRuntime:
                     with suppress(NotFound):
                         self._client.volumes.get(volume).remove(force=True)
 
+    def project_outdated(self, project: str, image: str | None) -> bool:
+        with self._docker():
+            environments = self._project_containers(project, PROJECT_ENVIRONMENT)
+            if not environments:
+                return False
+            try:
+                current = self._client.images.get(_image_tag(image) if image else self._base_image)
+            except NotFound:  # nothing newer to move to
+                return False
+            return bool(environments[0].attrs["Image"] != current.id)
+
+    def base_build(self) -> str:
+        with self._docker():
+            return str(self._client.images.get(self._base_image).id)
+
     def build_image(self, image: str, instructions: str, *, output: Callable[[str], None]) -> bool:
         dockerfile = f"FROM {self._base_image}\nUSER root\n{instructions}\nUSER {NON_ROOT_USER}\n"
         succeeded = True
@@ -561,9 +576,23 @@ class DockerRuntime:
             uid=int(uid) if uid.isdigit() else None, claude=reported.get("claude") or None
         )
 
-    def remove_image(self, image: str) -> None:
-        with self._docker(), suppress(NotFound):
-            self._client.images.remove(_image_tag(image), force=True)
+    def remove_image(self, image: str) -> bool:
+        with self._docker():
+            try:
+                self._client.images.get(_image_tag(image))
+            except NotFound:
+                return True
+            if self._client.containers.list(all=True, filters={"ancestor": _image_tag(image)}):
+                return False
+            try:
+                self._client.images.remove(_image_tag(image))
+            except NotFound:
+                return True
+            except APIError as error:
+                if error.status_code == 409:  # a container started from it meanwhile
+                    return False
+                raise
+        return True
 
     def _running_environment(self, project: str) -> Container:
         """Raises ProjectNotRunning."""

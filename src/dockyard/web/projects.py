@@ -58,6 +58,10 @@ class NewProject(BaseModel):
     image: str = BASE_IMAGE  # the id of a ready Image
 
 
+class ProjectChange(BaseModel):
+    image: str  # the id of a ready Image; only while the Project is stopped
+
+
 class ProjectOut(BaseModel):
     id: str
     name: str
@@ -71,6 +75,8 @@ class ProjectOut(BaseModel):
     memory: int  # bytes
     privileged: bool
     image: str  # its id
+    # It runs an older build of its Image: restarting it moves it to the newer one.
+    update_available: bool
 
     @classmethod
     def of(cls, project: Project) -> ProjectOut:
@@ -87,6 +93,7 @@ class ProjectOut(BaseModel):
             memory=project.memory,
             privileged=project.privileged,
             image=project.image,
+            update_available=project.update_available,
         )
 
 
@@ -113,7 +120,12 @@ def projects_routes(
 ) -> APIRouter:
     router = APIRouter()
 
-    conflicts = (Refusal.CLONING, Refusal.NOT_RUNNING, Refusal.ACTIVE_MAXIMUM)
+    conflicts = (
+        Refusal.CLONING,
+        Refusal.NOT_RUNNING,
+        Refusal.NOT_STOPPED,
+        Refusal.ACTIVE_MAXIMUM,
+    )
     limits = limits_shown(projects.limits)
 
     def status_code(refusal: ProjectRefused) -> int:
@@ -203,6 +215,18 @@ def projects_routes(
         if found is None:
             raise HTTPException(404)
         return ProjectOut.of(found)
+
+    @router.patch("/api/projects/{project}", response_model=ProjectOut)
+    def change_project(
+        request: Request, user: CurrentUser, project: str, change: ProjectChange
+    ) -> object:
+        try:
+            changed = projects.change_image(user, project, change.image)
+        except ProjectRefused as refusal:
+            return refused(request, refusal)
+        if changed is None:
+            raise HTTPException(404)
+        return ProjectOut.of(changed)
 
     @router.get("/api/projects/{project}/clone")
     def get_clone(user: CurrentUser, project: str) -> CloneOut:
@@ -317,23 +341,36 @@ def projects_routes(
             )
         return RedirectResponse(f"/projects/{project.id}", status_code=303)
 
+    def project_page_of(
+        request: Request,
+        user: User,
+        found: Project,
+        *,
+        problem: str | None = None,
+        status_code: int = 200,
+    ) -> HTMLResponse:
+        credential = (
+            git_credentials.get(user, found.git_credential) if found.git_credential else None
+        )
+        return pages.render(
+            request,
+            "project.html",
+            status_code=status_code,
+            user=user,
+            project=found,
+            clone=projects.clone(user, found.id),
+            git_credential=credential,
+            image=images.get(found.image),
+            images=images.ready(),
+            problem=problem,
+        )
+
     @router.get("/projects/{project}", response_class=HTMLResponse)
     def project_page(request: Request, user: CurrentUser, project: str) -> HTMLResponse:
         found = projects.get(user, project)
-        report = projects.clone(user, project)
         if found is not None:
-            credential = (
-                git_credentials.get(user, found.git_credential) if found.git_credential else None
-            )
-            return pages.render(
-                request,
-                "project.html",
-                user=user,
-                project=found,
-                clone=report,
-                git_credential=credential,
-                image=images.get(found.image),
-            )
+            return project_page_of(request, user, found)
+        report = projects.clone(user, project)
         if report is not None and report.state == CloneState.FAILED:
             return pages.render(
                 request, "clone_failed.html", user=user, report=report, retry=_retry(report)
@@ -357,6 +394,30 @@ def projects_routes(
         if found is None:
             raise HTTPException(404)
         return pages.render(request, template, user=user, project=found)
+
+    @router.post("/projects/{project}/image", response_model=None)
+    def change_from_page(
+        request: Request,
+        user: CurrentUser,
+        project: str,
+        image: Annotated[str, Form()] = BASE_IMAGE,
+    ) -> Response:
+        try:
+            changed = projects.change_image(user, project, image)
+        except ProjectRefused as refusal:
+            found = projects.get(user, project)
+            if found is None:
+                raise HTTPException(404) from refusal
+            return project_page_of(
+                request,
+                user,
+                found,
+                problem=f"project_refused.{refusal.reason}.body",
+                status_code=status_code(refusal),
+            )
+        if changed is None:
+            raise HTTPException(404)
+        return RedirectResponse(f"/projects/{project}", status_code=303)
 
     @router.post("/projects/{project}/delete")
     def delete_from_page(

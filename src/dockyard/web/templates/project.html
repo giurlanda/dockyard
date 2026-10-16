@@ -21,6 +21,7 @@
       {% endif %}</p>
     {% if git_credential %}<p class="hint muted">{{ t("project.git_credential_inside") }}</p>{% endif %}
     <p>{{ t("project.image") }}: {{ t("images.base.label") if image.base else image.label }}</p>
+    {% if project.update_available %}<p class="warning">{{ t("project.update_available") }}</p>{% endif %}
     <p>{{ t("project.permission_mode") }}: {{ t("permission_mode." ~ project.permission_mode) }}</p>
     <p>{{ t("project.resources") }}: {{ t("project.resources_value", cpus="%g" | format(project.cpus), memory="%g" | format(project.memory / 1024 ** 3)) }}</p>
     {% if project.permission_mode == "bypassPermissions" %}
@@ -81,6 +82,31 @@
         <div><dt>{{ t("project.memory") }}</dt><dd data-testid="memory" data-stat="memory">…</dd></div>
       </dl>
       <p class="hint muted" data-stat="cpus" data-template="{{ t('project.cpu_hint', cpus='{value}') }}"></p>
+    </section>
+  {% endif %}
+  {% if project.status != "cloning" %}
+    <section class="panel" aria-labelledby="image">
+      <h2 id="image">{{ t("project.change_image.heading") }}</h2>
+      {% if problem %}<p class="outcome bad" role="alert">{{ t(problem) }}</p>{% endif %}
+      {% if project.status == "stopped" %}
+        <form method="post" action="/projects/{{ project.id }}/image">
+          <fieldset class="field images" aria-describedby="change-image-hint">
+            <legend>{{ t("project.image") }}</legend>
+            <p class="hint muted" id="change-image-hint">{{ t("project.change_image.explain") }}</p>
+            {% for offered in images %}
+              <label class="check">
+                <input type="radio" name="image" value="{{ offered.id }}"{{ " checked" if offered.id == project.image }}
+                       aria-describedby="change-image-{{ offered.id }}-hint">
+                {{ t("images.base.label") if offered.base else offered.label }}
+              </label>
+              <p class="hint muted" id="change-image-{{ offered.id }}-hint">{{ t("images.base.description") if offered.base else offered.description }}</p>
+            {% endfor %}
+          </fieldset>
+          <div class="actions"><button>{{ t("project.change_image.button") }}</button></div>
+        </form>
+      {% else %}
+        <p class="muted">{{ t("project.change_image.stop_first") }}</p>
+      {% endif %}
     </section>
   {% endif %}
   <section class="panel" aria-labelledby="delete">

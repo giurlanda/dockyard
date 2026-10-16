@@ -3,12 +3,17 @@
 An Administrator writes only an Image's extra build instructions: the Runtime builds them on top of
 the Base Image, as root, then back to its non-root user. A built Image is checked (Claude Code is
 there, its default user is not root) before Users may pick it for a Project.
+
+Each build of an Image has its own name. Projects start from the last build that passed its check:
+one running an older build keeps it until it starts again, and a build no Project starts from any
+more is removed once none runs it. When the Base Image changes, every Image is built again.
 """
 
 from __future__ import annotations
 
 import logging
 import re
+import secrets
 import sqlite3
 import threading
 from dataclasses import dataclass, replace
@@ -24,6 +29,8 @@ LABEL_MAX_LENGTH = 60
 DESCRIPTION_MAX_LENGTH = 500
 INSTRUCTIONS_MAX_LENGTH = 20_000
 BUILD_LOG_LINES = 500  # the end of what a build printed: why it failed is there
+# Seconds between two looks for a new Base Image, and for builds no Project runs any more.
+CHECK_INTERVAL = 60.0
 # An instruction that starts another stage would leave the Base Image, and Claude Code, behind.
 # Upper case only: a line of a heredoc may start with "from" (Python's, for one).
 STARTS_A_STAGE = re.compile(r"^\s*FROM\s", re.MULTILINE)
@@ -76,6 +83,14 @@ class BaseImageUndeletable(Exception):
     """The Base Image is shipped with Dockyard: it is never deleted."""
 
 
+class BaseImageNotBuilt(Exception):
+    """The Base Image is shipped with Dockyard: Dockyard never builds it."""
+
+
+class ImageBuilding(Exception):
+    """The Image is being built already."""
+
+
 @dataclass(frozen=True)
 class Image:
     id: str
@@ -85,6 +100,9 @@ class Image:
     status: ImageStatus
     log: str = ""  # what its build printed, then what its check found
     failure: Failure | None = None
+    # The build Projects start from: the last one that passed its check, None until one did.
+    # A failed build leaves it as it was.
+    build: str | None = None
 
     @property
     def base(self) -> bool:
@@ -106,6 +124,7 @@ class Images:
         self._runtime = runtime
         self._lock = threading.Lock()
         self._logs: dict[str, str] = {}  # of the builds in progress
+        self._closed = threading.Event()
 
     def create(self, *, label: str, description: str, instructions: str) -> Image:
         """Record the Image and start building it: it is ready once built and checked.
@@ -133,8 +152,9 @@ class Images:
         return [BASE, *images]
 
     def ready(self) -> list[Image]:
-        """The Images Users may pick for a Project, the Base Image first."""
-        return [image for image in self.list_all() if image.status == ImageStatus.READY]
+        """The Images Users may pick for a Project, the Base Image first: those with a build
+        that passed its check, even while they are built again or after that failed."""
+        return [image for image in self.list_all() if image.base or image.build]
 
     def get(self, image: str) -> Image | None:
         if image == BASE_IMAGE:
@@ -159,42 +179,134 @@ class Images:
         with self._db.transaction() as conn:
             if using := _projects_using(conn, image):
                 raise ImageInUse(using)
-            deleted = conn.execute("DELETE FROM images WHERE id = ?", (image,)).rowcount
-        if deleted:
-            self._remove_built(image)
-        return deleted > 0
+            deleted = conn.execute(
+                "DELETE FROM images WHERE id = ? RETURNING build", (image,)
+            ).fetchone()
+        if deleted is None:
+            return False
+        if deleted["build"]:  # a build in progress is removed when it ends
+            self._retire(deleted["build"])
+        return True
+
+    def rebuild(self, image: str) -> Image | None:
+        """Build the Image again; until its new build passes its check, Projects keep starting
+        from the build they had. None if not found.
+
+        Raises BaseImageNotBuilt, ImageBuilding, RuntimeUnavailable.
+        """
+        if image == BASE_IMAGE:
+            raise BaseImageNotBuilt
+        if self.get(image) is None:
+            return None
+        self._runtime.check_reachable()  # a build Docker cannot start would fail for good
+        with self._db.transaction() as conn:
+            row = conn.execute(
+                "UPDATE images SET status = ? WHERE id = ? AND status != ? RETURNING instructions",
+                (ImageStatus.BUILDING, image, ImageStatus.BUILDING),
+            ).fetchone()
+        if row is None:
+            if self.get(image) is None:  # deleted meanwhile
+                return None
+            raise ImageBuilding
+        self._build_in_background(image, row["instructions"])
+        return self.get(image)
+
+    def failed(self) -> list[Image]:
+        """The Images whose last build failed: Administrators see them highlighted."""
+        return [image for image in self.list_all() if image.status == ImageStatus.FAILED]
 
     def resume(self) -> None:
-        """Build again the Images whose build was in progress when Dockyard stopped."""
+        """Build again the Images whose build was in progress when Dockyard stopped, and those
+        built on an older Base Image; remove the builds no Project runs any more."""
         with self._db.transaction() as conn:
             rows = conn.execute(
                 "SELECT id, instructions FROM images WHERE status = ?", (ImageStatus.BUILDING,)
             ).fetchall()
         for row in rows:
             self._build_in_background(row["id"], row["instructions"])
+        self._keep_current()
+
+    def keep_current(self) -> None:
+        """Until close: build every Image again when the Base Image changes, as when a newer
+        release of it is pulled, and remove the builds no Project runs any more."""
+        threading.Thread(target=self._keep_current_until_closed, name="images", daemon=True).start()
+
+    def close(self) -> None:
+        """Dockyard is stopping: stop keeping the Images current."""
+        self._closed.set()
+
+    def _keep_current_until_closed(self) -> None:
+        while not self._closed.wait(CHECK_INTERVAL):
+            self._keep_current()
+
+    def _keep_current(self) -> None:
+        try:
+            self._rebuild_on_new_base()
+            self._remove_retired()
+        except RuntimeUnavailable as error:
+            log.warning("Cannot keep the Images current: %s", error)
+        except Exception:  # never the end of it: the next look may succeed
+            log.exception("Cannot keep the Images current")
+
+    def _rebuild_on_new_base(self) -> None:
+        """Build again every Image whose last build started from another Base Image than the
+        one there is now. Raises RuntimeUnavailable."""
+        base = self._runtime.base_build()
+        with self._db.transaction() as conn:
+            rows = conn.execute(
+                "UPDATE images SET status = ? WHERE status != ? AND base_build IS NOT ?"
+                " RETURNING id, instructions",
+                (ImageStatus.BUILDING, ImageStatus.BUILDING, base),
+            ).fetchall()
+        for row in rows:
+            log.info("The Base Image changed: building Image %s again", row["id"])
+            self._build_in_background(row["id"], row["instructions"])
+
+    def _retire(self, build: str) -> None:
+        """No Project starts from the build any more: remove it once none runs it."""
+        with self._db.transaction() as conn:
+            conn.execute("INSERT OR IGNORE INTO retired_builds (build) VALUES (?)", (build,))
+        try:
+            self._remove_retired()
+        except RuntimeUnavailable as error:
+            log.warning("Cannot remove the builds no Project runs yet: %s", error)
+
+    def _remove_retired(self) -> None:
+        """Remove the retired builds no Project runs any more. Raises RuntimeUnavailable."""
+        with self._db.transaction() as conn:
+            builds = [row["build"] for row in conn.execute("SELECT build FROM retired_builds")]
+        for build in builds:
+            if self._runtime.remove_image(build):
+                with self._db.transaction() as conn:
+                    conn.execute("DELETE FROM retired_builds WHERE build = ?", (build,))
 
     def _build_in_background(self, image: str, instructions: str) -> None:
         with self._lock:
             self._logs[image] = ""
+        build = f"{image}-{secrets.token_hex(4)}"
         threading.Thread(
-            target=self._build, args=(image, instructions), name=f"image-{image}", daemon=True
+            target=self._build,
+            args=(image, build, instructions),
+            name=f"image-{image}",
+            daemon=True,
         ).start()
 
-    def _build(self, image: str, instructions: str) -> None:
-        """Build the Image, check it, and record how it went."""
+    def _build(self, image: str, build: str, instructions: str) -> None:
+        """Build the Image anew as `build`, check it, and record how it went: Projects start
+        from it once it passed its check."""
 
         def output(text: str) -> None:
             with self._lock:
                 self._logs[image] = _tail(self._logs.get(image, "") + text)
 
         failure: Failure | None = Failure.BUILD
+        base: str | None = None
         try:
-            if self._runtime.build_image(image, instructions, output=output):
-                check = self._runtime.check_image(image)
+            base = self._runtime.base_build()  # before the build: it may change meanwhile
+            if self._runtime.build_image(build, instructions, output=output):
+                check = self._runtime.check_image(build)
                 output(_checked(check))
                 failure = _failure(check)
-                if failure is not None:  # never picked: nothing keeps it
-                    self._remove_built(image)
         except (RuntimeUnavailable, ImageMissing) as error:
             output(f"{error}\n")
         except Exception:  # never left building forever
@@ -203,18 +315,24 @@ class Images:
         with self._lock:
             printed = self._logs.pop(image, "")
         with self._db.transaction() as conn:
-            recorded = conn.execute(
-                "UPDATE images SET status = ?, failure = ?, log = ? WHERE id = ?",
-                (ImageStatus.FAILED if failure else ImageStatus.READY, failure, printed, image),
-            ).rowcount
-        if not recorded:  # deleted meanwhile
-            self._remove_built(image)
-
-    def _remove_built(self, image: str) -> None:
-        try:
-            self._runtime.remove_image(image)
-        except RuntimeUnavailable as error:
-            log.warning("Cannot remove the built Image %s: %s", image, error)
+            previous = conn.execute("SELECT build FROM images WHERE id = ?", (image,)).fetchone()
+            conn.execute(
+                "UPDATE images SET status = ?, failure = ?, log = ?, base_build = ?,"
+                " build = CASE WHEN ? IS NULL THEN ? ELSE build END WHERE id = ?",
+                (
+                    ImageStatus.FAILED if failure else ImageStatus.READY,
+                    failure,
+                    printed,
+                    base,
+                    failure,
+                    build,
+                    image,
+                ),
+            )
+        if previous is None or failure is not None:  # deleted meanwhile, or never started from
+            self._retire(build)
+        elif previous["build"]:
+            self._retire(previous["build"])
 
     def _shown(self, row: sqlite3.Row) -> Image:
         """The Image as it is now: with what its build printed so far, while it is built."""
@@ -272,7 +390,7 @@ def _tail(log: str) -> str:
     return "\n".join(log.split("\n")[-BUILD_LOG_LINES:])
 
 
-_COLUMNS = "id, label, description, instructions, status, failure, log"
+_COLUMNS = "id, label, description, instructions, status, failure, log, build"
 
 
 def _projects_using(conn: sqlite3.Connection, image: str) -> list[UsingProject]:
@@ -293,4 +411,5 @@ def _image(row: sqlite3.Row) -> Image:
         status=ImageStatus(row["status"]),
         log=row["log"],
         failure=Failure(row["failure"]) if row["failure"] else None,
+        build=row["build"],
     )
