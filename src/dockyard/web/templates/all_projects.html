@@ -1,0 +1,50 @@
+{% extends "base.html" %}
+{% block title %}{{ t("all_projects.title") }}{% endblock %}
+{% block header %}{% include "_user.html" %}{% endblock %}
+{% block content %}
+  <section class="panel" aria-labelledby="all-projects">
+    <h1 id="all-projects">{{ t("all_projects.heading") }}</h1>
+    <p class="muted">{{ t("all_projects.explain") }}</p>
+    {% if owned_projects %}
+      <ul class="projects owned">
+        {% for owned in owned_projects %}
+          {% set project = owned.project %}
+          {% set live = project.status in ("running", "trust_prompt") %}
+          <li{% if live %} data-stats="/api/administration/projects/{{ project.id }}/stats"{% endif %}>
+            <div class="panel-heading">
+              {# Only their own Project's page: another User's leads to its Terminal, console and logs. #}
+              {% if owned.owner == user.email %}
+                <a href="/projects/{{ project.id }}">{{ project.name }}</a>
+              {% else %}
+                <strong>{{ project.name }}</strong>
+              {% endif %}
+              {% include "_project_status.html" %}
+            </div>
+            <p>{{ t("all_projects.user") }}: <span data-testid="project-user">{{ owned.owner }}</span></p>
+            <p class="muted repository">{{ project.repository }}</p>
+            <p>{{ t("project.resources_value", cpus="%g" | format(project.cpus), memory="%g" | format(project.memory / 1024 ** 3)) }}</p>
+            {% if live %}
+              <dl class="stats" aria-label="{{ t('project.usage') }}">
+                <div><dt>{{ t("project.cpu") }}</dt><dd data-testid="cpu" data-stat="cpu">…</dd></div>
+                <div><dt>{{ t("project.memory") }}</dt><dd data-testid="memory" data-stat="memory">…</dd></div>
+              </dl>
+            {% endif %}
+            <div class="actions">
+              {% if project.status != "stopped" %}
+                <form method="post" action="/administration/projects/{{ project.id }}/stop"><button>{{ t("project.stop") }}</button></form>
+              {% endif %}
+              <form method="post" action="/administration/projects/{{ project.id }}/delete">
+                <label class="check"><input type="checkbox" name="delete_code"> {{ t("project.delete.code") }}</label>
+                <button class="danger">{{ t("project.delete.button") }}</button>
+              </form>
+            </div>
+          </li>
+        {% endfor %}
+      </ul>
+    {% else %}
+      <p class="muted">{{ t("all_projects.empty") }}</p>
+    {% endif %}
+    <p><a href="/">{{ t("notice.home") }}</a></p>
+  </section>
+{% endblock %}
+{% block scripts %}<script src="/static/stats.js"></script>{% endblock %}

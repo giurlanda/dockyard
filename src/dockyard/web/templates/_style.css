@@ -115,3 +115,7 @@ button.danger { border-color: var(--bad); color: var(--bad); }
 .warning > :first-child { margin-top: 0; }
 .warning > :last-child { margin-bottom: 0; }
 .warning ul { padding-left: 20px; }
+.owned li { display: block; }
+.owned p { margin: 4px 0; }
+.owned .stats { margin-top: 8px; }
+.owned .actions form { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 16px; }

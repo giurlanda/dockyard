@@ -192,6 +192,14 @@ class Project:
 
 
 @dataclass(frozen=True)
+class OwnedProject:
+    """One of the Projects on the Instance, as an Administrator sees it."""
+
+    owner: str  # its owner's email
+    project: Project
+
+
+@dataclass(frozen=True)
 class CloneReport:
     """How a Project's clone went. A failed one outlives its Project, so its User can see why."""
 
@@ -317,6 +325,12 @@ class Projects:
             memory,
         )
 
+    def list_all(self) -> list[OwnedProject]:
+        """Every Project on the Instance, with its owner: for Administrators only."""
+        with self._db.transaction() as conn:
+            rows = conn.execute(f"{_OWNED} ORDER BY owner_email, created_at, rowid").fetchall()
+        return [self._owned(row) for row in rows]
+
     def list(self, owner: User) -> list[Project]:
         with self._db.transaction() as conn:
             rows = conn.execute(
@@ -324,6 +338,12 @@ class Projects:
                 (owner.runtime_id,),
             ).fetchall()
         return [self._project(row) for row in rows]
+
+    def get_any(self, project: str) -> OwnedProject | None:
+        """Any Project on the Instance, with its owner: for Administrators only."""
+        with self._db.transaction() as conn:
+            row = conn.execute(f"{_OWNED} WHERE id = ?", (project,)).fetchone()
+        return self._owned(row) if row else None
 
     def get(self, owner: User, project: str) -> Project | None:
         row = self._row(owner, project)
@@ -364,9 +384,19 @@ class Projects:
         """
         if self._row(owner, project) is None:
             return None
-        self._should_run(project, False)
-        self._runtime.stop_project(project)
+        self._stop(project)
         return self.get(owner, project)
+
+    def stop_any(self, project: str) -> OwnedProject | None:
+        """Stop any Project on the Instance, as its owner would: for Administrators only. None
+        if not found.
+
+        Raises RuntimeUnavailable.
+        """
+        if self._row_by_id(project) is None:
+            return None
+        self._stop(project)
+        return self.get_any(project)
 
     def follow_log(self, owner: User, project: str) -> Output | None:
         """What the Project's Remote Control Server printed, then what it prints, until it stops
@@ -397,10 +427,17 @@ class Projects:
         """
         if self._row(owner, project) is None:
             return None
-        stats = self._runtime.project_stats(project)
-        if stats is None:
-            raise ProjectRefused(Refusal.NOT_RUNNING)
-        return stats
+        return self._stats(project)
+
+    def stats_any(self, project: str) -> Stats | None:
+        """The CPU and RAM any Project on the Instance uses now: for Administrators only. None
+        if not found.
+
+        Raises ProjectRefused, RuntimeUnavailable.
+        """
+        if self._row_by_id(project) is None:
+            return None
+        return self._stats(project)
 
     def follow_sign_in(self, owner: User) -> None:
         """Once the owner's sign-in ends, start their Projects waiting for their Claude Account."""
@@ -426,20 +463,18 @@ class Projects:
 
     def delete(self, owner: User, project: str, *, code: bool) -> bool:
         """Remove the Project and its environment; its code only if `code`. False if not found."""
-        if self.get(owner, project) is None:
+        if self._row(owner, project) is None:
             return False
-        with self._lock:
-            # Its clone, removed meanwhile, must not pass for a failed one: that removes the code.
-            self._deleting.add(project)
-        try:
-            self._runtime.remove_project(project, code=code)
-            self._forget(project)
-            with self._lock:
-                self._clones.pop(project, None)
-                self._written.pop(project, None)
-        finally:
-            with self._lock:
-                self._deleting.discard(project)
+        self._delete(project, code=code)
+        return True
+
+    def delete_any(self, project: str, *, code: bool) -> bool:
+        """Delete any Project on the Instance, as its owner would: for Administrators only.
+        False if not found.
+        """
+        if self._row_by_id(project) is None:
+            return False
+        self._delete(project, code=code)
         return True
 
     def remove_owner(self, removed: RemovedUser) -> None:
@@ -484,6 +519,20 @@ class Projects:
                 self._follow_sign_in_in_background(owner)
             else:
                 self._start_waiting(owner)
+
+    def _delete(self, project: str, *, code: bool) -> None:
+        with self._lock:
+            # Its clone, removed meanwhile, must not pass for a failed one: that removes the code.
+            self._deleting.add(project)
+        try:
+            self._runtime.remove_project(project, code=code)
+            self._forget(project)
+            with self._lock:
+                self._clones.pop(project, None)
+                self._written.pop(project, None)
+        finally:
+            with self._lock:
+                self._deleting.discard(project)
 
     def _check_git_credential(
         self, owner: User, credential: str | None, visibility: Visibility, provider: Provider
@@ -536,6 +585,18 @@ class Projects:
                 if row["git_credential"]:
                     start = self._runtime.project_starts().get(row["id"])
                     self._write_git_credential(row, start)
+
+    def _stats(self, project: str) -> Stats:
+        """Raises ProjectRefused, RuntimeUnavailable."""
+        stats = self._runtime.project_stats(project)
+        if stats is None:
+            raise ProjectRefused(Refusal.NOT_RUNNING)
+        return stats
+
+    def _stop(self, project: str) -> None:
+        """Stop its Remote Control Server, or its wait: it is no longer active."""
+        self._should_run(project, False)
+        self._runtime.stop_project(project)
 
     def _keep_git_credentials(self) -> None:
         while not self._closed.wait(GIT_CREDENTIALS_INTERVAL):
@@ -700,6 +761,9 @@ class Projects:
         with self._db.transaction() as conn:
             conn.execute("DELETE FROM projects WHERE id = ?", (project,))
 
+    def _owned(self, row: sqlite3.Row) -> OwnedProject:
+        return OwnedProject(row["owner_email"], self._project(row))
+
     def _project(self, row: sqlite3.Row) -> Project:
         found = self._runtime.project_status(row["id"])
         if found == ProjectStatus.STOPPED:
@@ -723,6 +787,11 @@ class Projects:
 _COLUMNS = (
     "id, name, repository, provider, visibility, permission_mode, should_run, git_credential,"
     " cpus, memory"
+)
+# Projects with their owner's email, as Administrators see them.
+_OWNED = (
+    f"SELECT {_COLUMNS}, (SELECT email FROM users WHERE runtime_id = owner) AS owner_email"
+    " FROM projects"
 )
 # How many active Projects an owner (the parameter) has: those that should run, whether they
 # run, wait for a Claude Account, keep failing or are still being cloned.

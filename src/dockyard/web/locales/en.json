@@ -203,7 +203,7 @@
   "last_administrator.body": "This is the last Administrator of the Instance: it cannot be demoted or removed, or nobody could manage the Instance. Promote another User first.",
   "administration.heading": "Administration",
   "administration.users": "Users and Invitations",
-  "administration.explain": "Invite people, and choose who can use and manage this Instance.",
+  "administration.explain": "Invite people, choose who can use and manage this Instance, and look after every Project on it.",
   "users.title": "Users",
   "users.heading": "Users",
   "users.you": "(you)",
@@ -229,5 +229,11 @@
   "user.remove.no_projects": "They have no Projects.",
   "user.remove.confirm": "I understand that this cannot be undone",
   "user.remove.button": "Remove User",
-  "user.remove.unconfirmed": "Tick the box to confirm: removing a User cannot be undone."
+  "user.remove.unconfirmed": "Tick the box to confirm: removing a User cannot be undone.",
+  "administration.projects": "All Projects",
+  "all_projects.title": "All Projects",
+  "all_projects.heading": "All Projects",
+  "all_projects.explain": "Every Project on this Instance. Stop or delete any of them to free resources or stop abuse: deleting keeps its code and home folder unless you choose otherwise. Its Terminal, console and logs stay private to its User.",
+  "all_projects.empty": "There are no Projects on this Instance yet.",
+  "all_projects.user": "User"
 }

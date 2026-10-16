@@ -34,7 +34,7 @@ from ..projects import (
     Visibility,
 )
 from ..providers import Provider
-from ..runtime import CloneState, Output, RuntimeUnavailable
+from ..runtime import CloneState, Output, RuntimeUnavailable, Stats
 from .guard import CurrentUser, websocket_close_code
 from .pages import Pages
 from .terminal import bridge, show
@@ -93,6 +93,12 @@ class StatsOut(BaseModel):
     cpus: float  # the CPUs it may use
     memory: int  # bytes
     memory_limit: int  # bytes
+
+    @classmethod
+    def of(cls, stats: Stats) -> StatsOut:
+        return cls(
+            cpu=stats.cpu, cpus=stats.cpus, memory=stats.memory, memory_limit=stats.memory_limit
+        )
 
 
 def projects_routes(projects: Projects, git_credentials: GitCredentials, pages: Pages) -> APIRouter:
@@ -195,9 +201,7 @@ def projects_routes(projects: Projects, git_credentials: GitCredentials, pages: 
             return refused(request, refusal)
         if stats is None:
             raise HTTPException(404)
-        return StatsOut(
-            cpu=stats.cpu, cpus=stats.cpus, memory=stats.memory, memory_limit=stats.memory_limit
-        )
+        return StatsOut.of(stats)
 
     @router.websocket("/ws/projects/{project}/logs")
     async def logs(websocket: WebSocket, user: CurrentUser, project: str) -> None:

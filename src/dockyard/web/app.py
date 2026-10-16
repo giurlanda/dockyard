@@ -23,6 +23,7 @@ from ..identity import SigningKeys, identity_for
 from ..projects import Projects
 from ..runtime import Runtime, RuntimeUnavailable
 from ..settings import Settings
+from .all_projects import all_projects_routes
 from .claude_account import claude_account_routes, claude_account_status
 from .git_credentials import git_credentials_routes
 from .guard import CurrentUser, IdentityGuard, NotAdministrator
@@ -117,6 +118,7 @@ def create_app(
     app.include_router(projects_routes(projects, git_credentials, pages))
     app.include_router(git_credentials_routes(git_credentials, pages))
     app.include_router(users_routes(accounts, projects, runtime, pages))
+    app.include_router(all_projects_routes(projects, pages))
     app.mount("/static", StaticFiles(packages=[("dockyard.web", "static")]), name="static")
     return app
 

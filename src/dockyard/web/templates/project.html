@@ -71,9 +71,9 @@
     </section>
   {% endif %}
   {% if live %}
-    <section class="panel" aria-labelledby="usage">
+    <section class="panel" aria-labelledby="usage" data-stats="/api/projects/{{ project.id }}/stats">
       <h2 id="usage">{{ t("project.usage") }}</h2>
-      <dl class="stats" data-stats="/api/projects/{{ project.id }}/stats">
+      <dl class="stats">
         <div><dt>{{ t("project.cpu") }}</dt><dd data-testid="cpu" data-stat="cpu">…</dd></div>
         <div><dt>{{ t("project.memory") }}</dt><dd data-testid="memory" data-stat="memory">…</dd></div>
       </dl>
@@ -89,4 +89,4 @@
     </form>
   </section>
 {% endblock %}
-{% block scripts %}<script src="/static/project.js"></script>{% endblock %}
+{% block scripts %}<script src="/static/project.js"></script><script src="/static/stats.js"></script>{% endblock %}
