@@ -14,7 +14,7 @@ from typing import Protocol
 LOGIN_TIMEOUT = 15 * 60  # seconds a login environment waits for its User before it ends
 CLONE_TIMEOUT = 30 * 60  # seconds a clone may take before it is given up
 DEFAULT_DNS = ("1.1.1.1", "9.9.9.9")  # the DNS servers of Projects, unless configured
-# What each Project environment may use. Until the Instance limits exist, the same for all.
+# What a Project environment may use unless told otherwise; the Instance limits bound the rest.
 PROJECT_CPUS = 2
 PROJECT_MEMORY = 4 * 1024**3  # bytes
 PROJECT_PIDS_LIMIT = 2048
@@ -170,8 +170,18 @@ class Runtime(Protocol):
         """Let go of a clone that ended, keeping the code it cloned."""
         ...
 
-    def start_project(self, user: str, project: str, *, name: str, permission_mode: str) -> None:
-        """(Re)create the Project's environment and start its Remote Control Server in it.
+    def start_project(
+        self,
+        user: str,
+        project: str,
+        *,
+        name: str,
+        permission_mode: str,
+        cpus: float = PROJECT_CPUS,
+        memory: int = PROJECT_MEMORY,
+    ) -> None:
+        """(Re)create the Project's environment, which may use `cpus` CPUs and `memory` bytes
+        of RAM, and start its Remote Control Server in it.
 
         Before it starts, the User's Claude config trusts project_path(project). The server is
         `claude remote-control --name=<name> --spawn worktree --permission-mode <mode>`, run in

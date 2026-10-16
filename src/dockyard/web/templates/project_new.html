@@ -4,7 +4,7 @@
 {% block content %}
   <section class="panel">
     <h1>{{ t("project_new.title") }}</h1>
-    {% if problem %}<p class="outcome bad" role="alert">{{ t(problem) }}</p>{% endif %}
+    {% if problem %}<p class="outcome bad" role="alert">{{ t(problem, **limits) }}</p>{% endif %}
     <form class="fields" method="post" action="/projects">
       <div class="field">
         <label for="repository">{{ t("project_new.repository") }}</label>
@@ -64,6 +64,26 @@
           <p class="hint muted" id="{{ mode }}-hint">{{ t("permission_mode." ~ mode ~ "_hint") }}</p>
         {% endfor %}
         <p class="warning bypass-warning" role="note">{{ t("permission_mode.bypass_warning") }}</p>
+      </fieldset>
+      <fieldset class="field resources" aria-describedby="resources-hint">
+        <legend>{{ t("project_new.resources") }}</legend>
+        <p class="hint muted" id="resources-hint">{{ t("project_new.resources_hint", **limits) }}</p>
+        <div class="amounts">
+          <div>
+            <label for="cpus">{{ t("project_new.cpus") }}</label>
+            <input id="cpus" name="cpus" type="number" inputmode="decimal" step="any"
+                   min="{{ limits.min_cpus }}" max="{{ limits.max_cpus }}" value="{{ cpus }}"
+                   aria-describedby="cpus-hint" required>
+            <p class="hint muted" id="cpus-hint">{{ t("project_new.cpus_hint", **limits) }}</p>
+          </div>
+          <div>
+            <label for="memory">{{ t("project_new.memory") }}</label>
+            <input id="memory" name="memory" type="number" inputmode="decimal" step="any"
+                   min="{{ limits.min_memory }}" max="{{ limits.max_memory }}" value="{{ memory }}"
+                   aria-describedby="memory-hint" required>
+            <p class="hint muted" id="memory-hint">{{ t("project_new.memory_hint", **limits) }}</p>
+          </div>
+        </div>
       </fieldset>
       <div class="actions">
         <button class="primary">{{ t("project_new.create") }}</button>

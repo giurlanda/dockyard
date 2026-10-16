@@ -6,6 +6,7 @@ A User only ever reaches their own Projects: anyone else's answer "not found".
 from __future__ import annotations
 
 import logging
+import math
 from collections.abc import Callable
 from http import HTTPStatus
 from typing import Annotated, Literal
@@ -20,7 +21,11 @@ from starlette.responses import Response
 from ..accounts import User
 from ..git_credentials import GitCredentials
 from ..projects import (
+    GIB,
+    MIN_CPUS,
+    MIN_MEMORY,
     CloneReport,
+    Limits,
     PermissionMode,
     Project,
     ProjectRefused,
@@ -39,12 +44,15 @@ log = logging.getLogger(__name__)
 Lifecycle = Literal["start", "stop", "restart"]  # restarting is starting a running Project
 
 
+# The form shows RAM in GiB; the API takes and gives bytes.
 class NewProject(BaseModel):
     name: str
     repository: str
     visibility: Visibility
     permission_mode: PermissionMode = PermissionMode.DEFAULT
     git_credential: str | None = None  # the id of one of the User's Git Credentials
+    cpus: float | None = None  # None: the most the Instance allows
+    memory: int | None = None  # bytes. None: the most the Instance allows
 
 
 class ProjectOut(BaseModel):
@@ -56,6 +64,8 @@ class ProjectOut(BaseModel):
     permission_mode: str
     status: str
     git_credential: str | None
+    cpus: float
+    memory: int  # bytes
 
     @classmethod
     def of(cls, project: Project) -> ProjectOut:
@@ -68,6 +78,8 @@ class ProjectOut(BaseModel):
             permission_mode=project.permission_mode,
             status=project.status,
             git_credential=project.git_credential,
+            cpus=project.cpus,
+            memory=project.memory,
         )
 
 
@@ -86,13 +98,17 @@ class StatsOut(BaseModel):
 def projects_routes(projects: Projects, git_credentials: GitCredentials, pages: Pages) -> APIRouter:
     router = APIRouter()
 
+    conflicts = (Refusal.CLONING, Refusal.NOT_RUNNING, Refusal.ACTIVE_MAXIMUM)
+    limits = limits_shown(projects.limits)
+
     def refused(request: Request, refusal: ProjectRefused) -> Response:
-        status_code = 409 if refusal.reason in (Refusal.CLONING, Refusal.NOT_RUNNING) else 422
+        status_code = 409 if refusal.reason in conflicts else 422
         return pages.problem(
             request,
             refusal.reason,
             key=f"project_refused.{refusal.reason}",
             status_code=status_code,
+            **limits,
         )
 
     def new_project_page(
@@ -104,6 +120,8 @@ def projects_routes(projects: Projects, git_credentials: GitCredentials, pages: 
         visibility: Visibility = Visibility.PUBLIC,
         git_credential: str = "",
         permission_mode: PermissionMode = PermissionMode.DEFAULT,
+        cpus: str = "",  # "": the most the Instance allows
+        memory: str = "",  # in GiB. "": the most the Instance allows
         problem: str | None = None,
         status_code: int = 200,
     ) -> HTMLResponse:
@@ -121,6 +139,9 @@ def projects_routes(projects: Projects, git_credentials: GitCredentials, pages: 
             git_credential=git_credential,
             permission_modes=list(PermissionMode),
             permission_mode=permission_mode,
+            cpus=cpus or limits["max_cpus"],
+            memory=memory or limits["max_memory"],
+            limits=limits,
             problem=problem,
         )
 
@@ -145,6 +166,8 @@ def projects_routes(projects: Projects, git_credentials: GitCredentials, pages: 
                 visibility=new.visibility,
                 permission_mode=new.permission_mode,
                 git_credential=new.git_credential,
+                cpus=new.cpus,
+                memory=new.memory,
             )
         except ProjectRefused as refusal:
             return refused(request, refusal)
@@ -211,6 +234,8 @@ def projects_routes(projects: Projects, git_credentials: GitCredentials, pages: 
         repository: str = "",
         visibility: Visibility = Visibility.PUBLIC,
         git_credential: str = "",
+        cpus: str = "",
+        memory: str = "",
     ) -> HTMLResponse:
         return new_project_page(
             request,
@@ -219,6 +244,8 @@ def projects_routes(projects: Projects, git_credentials: GitCredentials, pages: 
             repository=repository,
             visibility=visibility,
             git_credential=git_credential,
+            cpus=cpus,
+            memory=memory,
         )
 
     @router.post("/projects", response_model=None)
@@ -230,8 +257,11 @@ def projects_routes(projects: Projects, git_credentials: GitCredentials, pages: 
         visibility: Annotated[Visibility, Form()] = Visibility.PUBLIC,
         git_credential: Annotated[str, Form()] = "",  # "": none
         permission_mode: Annotated[PermissionMode, Form()] = PermissionMode.DEFAULT,
+        cpus: Annotated[str, Form()] = "",  # "": the most the Instance allows
+        memory: Annotated[str, Form()] = "",  # in GiB. "": the most the Instance allows
     ) -> Response:
         try:
+            chosen_memory = _amount(memory, Refusal.MEMORY_OUT_OF_RANGE)
             project = projects.create(
                 user,
                 name=name,
@@ -239,6 +269,8 @@ def projects_routes(projects: Projects, git_credentials: GitCredentials, pages: 
                 visibility=visibility,
                 permission_mode=permission_mode,
                 git_credential=git_credential or None,
+                cpus=_amount(cpus, Refusal.CPUS_OUT_OF_RANGE),
+                memory=None if chosen_memory is None else round(chosen_memory * GIB),
             )
         except ProjectRefused as refusal:
             return new_project_page(
@@ -249,6 +281,8 @@ def projects_routes(projects: Projects, git_credentials: GitCredentials, pages: 
                 visibility=visibility,
                 git_credential=git_credential,
                 permission_mode=permission_mode,
+                cpus=cpus,
+                memory=memory,
                 problem=f"project_refused.{refusal.reason}.body",
                 status_code=422,
             )
@@ -332,6 +366,34 @@ async def opened[T: Output](websocket: WebSocket, opening: Callable[[], T | None
     return output
 
 
+def limits_shown(limits: Limits) -> dict[str, str]:
+    """The Instance limits as messages and the new Project form show them: RAM in GiB."""
+    return {
+        "min_cpus": _number(MIN_CPUS),
+        "max_cpus": _number(limits.max_cpus),
+        "min_memory": _number(MIN_MEMORY / GIB),
+        "max_memory": _number(limits.max_memory / GIB),
+        "max_active": str(limits.max_active),
+    }
+
+
+def _number(value: float) -> str:
+    return f"{value:g}"
+
+
+def _amount(text: str, refusal: Refusal) -> float | None:
+    """An amount typed in the form; None when left empty. Raises ProjectRefused(refusal)."""
+    if not text.strip():
+        return None
+    try:
+        amount = float(text)
+    except ValueError:
+        raise ProjectRefused(refusal) from None
+    if not math.isfinite(amount):
+        raise ProjectRefused(refusal)
+    return amount
+
+
 def _retry(report: CloneReport) -> str:
     """The new Project form, filled in as it was for the clone that failed."""
     filled = {
@@ -339,5 +401,7 @@ def _retry(report: CloneReport) -> str:
         "repository": report.repository,
         "visibility": report.visibility,
         "git_credential": report.git_credential or "",
+        "cpus": "" if report.cpus is None else _number(report.cpus),
+        "memory": "" if report.memory is None else _number(report.memory / GIB),
     }
     return "/projects/new?" + urlencode(filled)

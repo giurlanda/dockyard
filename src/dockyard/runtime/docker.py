@@ -313,7 +313,16 @@ class DockerRuntime:
             for clone in self._project_containers(project, CLONE):
                 clone.remove(force=True)
 
-    def start_project(self, user: str, project: str, *, name: str, permission_mode: str) -> None:
+    def start_project(
+        self,
+        user: str,
+        project: str,
+        *,
+        name: str,
+        permission_mode: str,
+        cpus: float = PROJECT_CPUS,
+        memory: int = PROJECT_MEMORY,
+    ) -> None:
         path = project_path(project)
         with self._docker():
             try:
@@ -358,8 +367,8 @@ class DockerRuntime:
                 restart_policy={"Name": "unless-stopped"},  # type: ignore[arg-type]
                 network=network,
                 dns=list(self._dns),
-                mem_limit=PROJECT_MEMORY,
-                nano_cpus=int(PROJECT_CPUS * 1_000_000_000),
+                mem_limit=memory,
+                nano_cpus=round(cpus * 1_000_000_000),
                 **{**HARDENING, "pids_limit": PROJECT_PIDS_LIMIT},
             )
             environment.start()

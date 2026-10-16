@@ -62,6 +62,14 @@ def test_every_missing_setting_is_reported_at_once() -> None:
         ("DOCKYARD_PROJECTS_DNS", "dns.example.com"),
         ("DOCKYARD_PROJECTS_DNS", "1.1.1.1;9.9.9.9"),
         ("DOCKYARD_PROJECTS_DNS", ","),
+        ("DOCKYARD_PROJECT_MAX_CPUS", "two"),
+        ("DOCKYARD_PROJECT_MAX_CPUS", "0.25"),
+        ("DOCKYARD_PROJECT_MAX_CPUS", "inf"),
+        ("DOCKYARD_PROJECT_MAX_MEMORY_GIB", "4g"),
+        ("DOCKYARD_PROJECT_MAX_MEMORY_GIB", "0.5"),
+        ("DOCKYARD_MAX_ACTIVE_PROJECTS", "0"),
+        ("DOCKYARD_MAX_ACTIVE_PROJECTS", "2.5"),
+        ("DOCKYARD_MAX_ACTIVE_PROJECTS", "nan"),
     ],
 )
 def test_dockyard_refuses_to_start_with_an_invalid_setting(

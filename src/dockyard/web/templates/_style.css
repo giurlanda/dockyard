@@ -89,12 +89,16 @@ button.danger { border-color: var(--bad); color: var(--bad); }
 .fields { display: grid; gap: 16px; }
 .field { margin: 0; padding: 0; border: 0; min-width: 0; }
 .field label, .field legend { display: block; font-weight: 600; margin-bottom: 4px; padding: 0; }
-.field input:not([type]), .field input[type="password"], .field input[type="email"] {
+.field input:not([type]), .field input[type="password"], .field input[type="email"],
+.field input[type="number"] {
   width: 100%; font: inherit; padding: 6px 10px; border-radius: 6px;
   border: 1px solid var(--line); background: var(--bg); color: var(--ink);
 }
 .field .check { font-weight: normal; }
 .hint { font-size: 13px; margin: 4px 0 0; }
+.resources > .hint { margin: 0 0 8px; }
+.amounts { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 12px; }
+.amounts label { font-weight: normal; }
 .output {
   margin: 8px 0; padding: 10px; max-height: 320px; overflow-y: auto; border-radius: 8px;
   background: #000; color: #e6e6e6; font-size: 12px; white-space: pre-wrap; overflow-wrap: anywhere;

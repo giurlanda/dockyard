@@ -37,6 +37,13 @@ _Avoid_: token (alone), secret, key
 A repository cloned by a User, with its own dedicated environment where Claude Code runs.
 _Avoid_: repo, workspace, container, instance
 
+**Active Project** (Progetto attivo):
+A Project that is not stopped: being cloned, running, waiting for its owner's Claude Account, or failing. A User may have only as many as the Instance limits allow.
+
+**Instance limits** (Limiti dell'Istanza):
+The most CPU and RAM one Project may use (also what it gets unless its User chooses less) and the most Active Projects per User, set in the Instance configuration.
+_Avoid_: quota
+
 **Visibility** (Visibilità):
 Whether a Project's repository is public or private. A private Project requires a Git Credential; a public one may have one (to open issues and PRs). Either way at most one, from the same provider as the repository.
 

@@ -235,7 +235,16 @@ class FakeRuntime:
             if found := self._projects.get(project):
                 found.clone = None
 
-    def start_project(self, user: str, project: str, *, name: str, permission_mode: str) -> None:
+    def start_project(
+        self,
+        user: str,
+        project: str,
+        *,
+        name: str,
+        permission_mode: str,
+        cpus: float = PROJECT_CPUS,
+        memory: int = PROJECT_MEMORY,
+    ) -> None:
         self.check_reachable()
         with self._lock:
             found = self._projects.get(project)
@@ -245,6 +254,7 @@ class FakeRuntime:
             found.command = (
                 f"remote-control --name={name} --spawn worktree --permission-mode {permission_mode}"
             )
+            found.resources = (cpus, memory)
             previous, found.server, found.crashed = found.server, None, False
         if previous:
             previous.end()
@@ -306,7 +316,8 @@ class FakeRuntime:
             if not found or not found.server or found.crashed:
                 return None
             cpu, memory = found.usage
-            return Stats(cpu=cpu, cpus=PROJECT_CPUS, memory=memory, memory_limit=PROJECT_MEMORY)
+            cpus, memory_limit = found.resources
+            return Stats(cpu=cpu, cpus=cpus, memory=memory, memory_limit=memory_limit)
 
     def project_status(self, project: str) -> ProjectStatus:
         self.check_reachable()
@@ -382,6 +393,7 @@ class FakeRuntime:
         """What the contract suite's stand-in reports once its directory is trusted."""
         with self._lock:
             found = self._projects[project]
+            cpus, memory = found.resources
             path = project_path(project)
             environment = self._remote_control.setdefault(found.user, {}).setdefault(
                 path, secrets.token_hex(8)
@@ -398,8 +410,8 @@ class FakeRuntime:
                 "capabilities: 0000000000000000",
                 "no new privileges: 1",
                 f"pids limit: {PROJECT_PIDS_LIMIT}",
-                f"memory limit: {PROJECT_MEMORY}",
-                f"cpu limit: {PROJECT_CPUS * 100000} 100000",
+                f"memory limit: {memory}",
+                f"cpu limit: {round(cpus * 100000)} 100000",
                 f"dns: {' '.join(self._dns)}",
                 "anthropic environment: ",
             ]
@@ -434,6 +446,7 @@ class _Project:
     crashed: bool = False  # its server keeps failing
     starts: int = 0  # how many times its server started, as counted in its home
     usage: tuple[float, int] = (USED_CPU, USED_MEMORY)
+    resources: tuple[float, int] = (PROJECT_CPUS, PROJECT_MEMORY)  # the CPUs and RAM it may use
     launches: int = 0  # how many times its environment started, by Dockyard or by itself
     git_token: GitToken | None = None  # what its tmpfs holds, written since it last started
 

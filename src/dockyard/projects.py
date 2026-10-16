@@ -18,6 +18,8 @@ from .database import Database
 from .git_credentials import GitCredentials
 from .providers import Provider
 from .runtime import (
+    PROJECT_CPUS,
+    PROJECT_MEMORY,
     Clone,
     CloneState,
     GitToken,
@@ -44,6 +46,24 @@ HOSTS = {provider: host for host, provider in PROVIDERS.items()}
 GIT_CREDENTIALS_INTERVAL = 2.0
 # A path segment of a repository: an owner, a group or the repository itself (never "." or "..").
 SEGMENT = re.compile(r"^[A-Za-z0-9_][A-Za-z0-9_.-]*$")
+# The least a Project may be given, whatever the Instance limits: Claude Code needs it to run.
+MIN_CPUS = 0.5
+GIB = 1024**3  # bytes
+MIN_MEMORY = GIB  # bytes
+MAX_ACTIVE_PROJECTS = 3  # per User, unless the Instance configuration says otherwise
+
+
+@dataclass(frozen=True)
+class Limits:
+    """The Instance limits: the most CPU and RAM one Project may use, which is also what it gets
+    unless its User chooses less, and how many active Projects each User may have."""
+
+    max_cpus: float = PROJECT_CPUS
+    max_memory: int = PROJECT_MEMORY  # bytes
+    max_active: int = MAX_ACTIVE_PROJECTS
+
+
+DEFAULT_LIMITS = Limits()
 
 
 class Visibility(StrEnum):
@@ -96,6 +116,9 @@ class Refusal(StrEnum):
     GIT_CREDENTIAL_REQUIRED = "git_credential_required"
     GIT_CREDENTIAL_NOT_FOUND = "git_credential_not_found"
     GIT_CREDENTIAL_PROVIDER = "git_credential_provider"
+    CPUS_OUT_OF_RANGE = "cpus_out_of_range"
+    MEMORY_OUT_OF_RANGE = "memory_out_of_range"
+    ACTIVE_MAXIMUM = "active_maximum"
     CLONING = "cloning"
     NOT_RUNNING = "not_running"
 
@@ -164,6 +187,8 @@ class Project:
     permission_mode: PermissionMode
     status: Status
     git_credential: str | None = None  # its id
+    cpus: float = PROJECT_CPUS  # the CPUs it may use
+    memory: int = PROJECT_MEMORY  # the RAM it may use, in bytes
 
 
 @dataclass(frozen=True)
@@ -177,6 +202,8 @@ class CloneReport:
     git_credential: str | None
     state: CloneState = CloneState.RUNNING
     output: str = ""
+    cpus: float | None = None
+    memory: int | None = None  # bytes
 
 
 class Projects:
@@ -186,8 +213,10 @@ class Projects:
         runtime: Runtime,
         git_credentials: GitCredentials,
         *,
+        limits: Limits = DEFAULT_LIMITS,
         poll_interval: float = CLONE_POLL_INTERVAL,
     ) -> None:
+        self.limits = limits
         self._db = database
         self._runtime = runtime
         self._git_credentials = git_credentials
@@ -209,20 +238,33 @@ class Projects:
         visibility: Visibility,
         permission_mode: PermissionMode = PermissionMode.DEFAULT,
         git_credential: str | None = None,
+        cpus: float | None = None,
+        memory: int | None = None,
     ) -> Project:
         """Record the Project and start cloning it, with its Git Credential if it has one; once
-        cloned, it starts (or waits for its owner's Claude Account).
+        cloned, it starts (or waits for its owner's Claude Account). It may use `cpus` CPUs and
+        `memory` bytes of RAM, within the Instance limits: their maximum when not given. It is
+        active from now on, so the owner must have fewer active Projects than the maximum.
 
         Raises ProjectRefused, RuntimeUnavailable.
         """
         name = valid_name(name)
         source = parse_repository(repository)
+        cpus = self.limits.max_cpus if cpus is None else cpus
+        memory = self.limits.max_memory if memory is None else memory
+        if not MIN_CPUS <= cpus <= self.limits.max_cpus:
+            raise ProjectRefused(Refusal.CPUS_OUT_OF_RANGE)
+        if not MIN_MEMORY <= memory <= self.limits.max_memory:
+            raise ProjectRefused(Refusal.MEMORY_OUT_OF_RANGE)
         self._check_git_credential(owner, git_credential, visibility, source.provider)
         try:
             with self._db.transaction() as conn:
-                (project,) = conn.execute(
+                # Counted and recorded in one statement: two creations at once cannot both pass.
+                created = conn.execute(
                     "INSERT INTO projects (owner, name, repository, provider, visibility,"
-                    " permission_mode, git_credential) VALUES (?, ?, ?, ?, ?, ?, ?) RETURNING id",
+                    " permission_mode, git_credential, cpus, memory, should_run)"
+                    " SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, 1"
+                    f" WHERE ({_ACTIVE}) < ? RETURNING id",
                     (
                         owner.runtime_id,
                         name,
@@ -231,10 +273,17 @@ class Projects:
                         visibility,
                         permission_mode,
                         git_credential,
+                        cpus,
+                        memory,
+                        owner.runtime_id,
+                        self.limits.max_active,
                     ),
                 ).fetchone()
         except sqlite3.IntegrityError as error:  # its Git Credential was deleted meanwhile
             raise ProjectRefused(Refusal.GIT_CREDENTIAL_NOT_FOUND) from error
+        if created is None:
+            raise ProjectRefused(Refusal.ACTIVE_MAXIMUM)
+        (project,) = created
         credential = self._git_token(git_credential, source.provider)
         try:
             self._runtime.start_clone(owner.runtime_id, project, source.url, credential=credential)
@@ -244,7 +293,16 @@ class Projects:
             self._forget(project)
             raise
         self._follow(
-            project, CloneReport(owner.runtime_id, name, source.url, visibility, git_credential)
+            project,
+            CloneReport(
+                owner.runtime_id,
+                name,
+                source.url,
+                visibility,
+                git_credential,
+                cpus=cpus,
+                memory=memory,
+            ),
         )
         return Project(
             project,
@@ -255,6 +313,8 @@ class Projects:
             permission_mode,
             Status.CLONING,
             git_credential,
+            cpus,
+            memory,
         )
 
     def list(self, owner: User) -> list[Project]:
@@ -280,7 +340,21 @@ class Projects:
             return None
         if self._runtime.project_status(project) == ProjectStatus.CLONING:
             raise ProjectRefused(Refusal.CLONING)
-        self._start(row)
+        with self._db.transaction() as conn:
+            # Counted and recorded in one statement: two starts at once cannot both pass.
+            active = conn.execute(
+                "UPDATE projects SET should_run = 1"
+                f" WHERE id = ? AND (should_run = 1 OR ({_ACTIVE}) < ?)",
+                (project, owner.runtime_id, self.limits.max_active),
+            ).rowcount
+        if not active:
+            raise ProjectRefused(Refusal.ACTIVE_MAXIMUM)
+        try:
+            self._start(row)
+        except RuntimeUnavailable:
+            if not row["should_run"]:  # it was not active: it still is not
+                self._should_run(project, False)
+            raise
         return self.get(owner, project)
 
     def stop(self, owner: User, project: str) -> Project | None:
@@ -401,6 +475,8 @@ class Projects:
                         row["repository"],
                         Visibility(row["visibility"]),
                         row["git_credential"],
+                        cpus=row["cpus"],
+                        memory=row["memory"],
                     ),
                 )
         for (owner,) in waiting:
@@ -444,7 +520,8 @@ class Projects:
             raise ProjectRefused(Refusal.NOT_RUNNING) from error
 
     def _start(self, row: sqlite3.Row) -> None:
-        """Start its Remote Control Server, or have it wait for its owner's Claude Account."""
+        """Start its Remote Control Server, or have it wait for its owner's Claude Account. It
+        is already active: never marked so here, which would undo a stop made meanwhile."""
         if self._runtime.claude_account_connected(row["owner"]):
             with suppress(ProjectMissing):  # its status says so
                 self._runtime.start_project(
@@ -452,11 +529,13 @@ class Projects:
                     row["id"],
                     name=row["name"],
                     permission_mode=row["permission_mode"],
+                    # Within the Instance limits as they are now, even if lowered since.
+                    cpus=min(row["cpus"], self.limits.max_cpus),
+                    memory=min(row["memory"], self.limits.max_memory),
                 )
                 if row["git_credential"]:
                     start = self._runtime.project_starts().get(row["id"])
                     self._write_git_credential(row, start)
-        self._should_run(row["id"], True)
 
     def _keep_git_credentials(self) -> None:
         while not self._closed.wait(GIT_CREDENTIALS_INTERVAL):
@@ -556,7 +635,8 @@ class Projects:
         """Deal with how the clone ended, then report it: a failed one means its Project is gone."""
         if clone.state == CloneState.SUCCEEDED:
             # Started while its clone is still there: it goes from cloning to running at once.
-            if row := self._row_by_id(project):
+            # Not if its User stopped it meanwhile: it is no longer active.
+            if (row := self._row_by_id(project)) and row["should_run"]:
                 self._start(row)
             self._runtime.finish_clone(project)
         else:
@@ -635,10 +715,18 @@ class Projects:
             permission_mode=PermissionMode(row["permission_mode"]),
             status=status,
             git_credential=row["git_credential"],
+            cpus=row["cpus"],
+            memory=row["memory"],
         )
 
 
-_COLUMNS = "id, name, repository, provider, visibility, permission_mode, should_run, git_credential"
+_COLUMNS = (
+    "id, name, repository, provider, visibility, permission_mode, should_run, git_credential,"
+    " cpus, memory"
+)
+# How many active Projects an owner (the parameter) has: those that should run, whether they
+# run, wait for a Claude Account, keep failing or are still being cloned.
+_ACTIVE = "SELECT count(*) FROM projects WHERE owner = ? AND should_run = 1"
 
 
 def _readable(output: str) -> str:

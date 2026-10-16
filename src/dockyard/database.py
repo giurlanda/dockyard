@@ -79,6 +79,13 @@ MIGRATIONS = (
         created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
     );
     """,
+    # What the Project may use, chosen at creation within the Instance limits: CPUs, and RAM
+    # in bytes. Projects created before get what every Project got until then.
+    """
+    ALTER TABLE projects ADD COLUMN cpus REAL NOT NULL DEFAULT 2 CHECK (cpus > 0);
+    ALTER TABLE projects ADD COLUMN memory INTEGER NOT NULL DEFAULT 4294967296
+        CHECK (memory > 0);
+    """,
 )
 
 

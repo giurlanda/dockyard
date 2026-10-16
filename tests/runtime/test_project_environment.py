@@ -139,6 +139,24 @@ def test_a_project_runs_hardened_as_the_non_root_user_with_limits(
     assert reported(log, "cpu limit") == "200000 100000"  # 2 CPUs
 
 
+def test_a_project_runs_within_the_cpu_and_ram_it_was_given(
+    runtime: Runtime, new_user: Callable[[], str]
+) -> None:
+    user = new_user()
+    project = cloned(runtime, user)
+
+    runtime.start_project(
+        user, project, name="Hello", permission_mode="default", cpus=1.5, memory=1024**3
+    )
+
+    log = server_ready(runtime, project)
+    assert reported(log, "memory limit") == str(1024**3)
+    assert reported(log, "cpu limit") == "150000 100000"  # 1.5 CPUs
+    stats = runtime.project_stats(project)
+    assert stats is not None
+    assert (stats.cpus, stats.memory_limit) == (1.5, 1024**3)
+
+
 def test_a_project_resolves_names_with_the_configured_dns_servers(
     make_runtime: MakeRuntime, new_user: Callable[[], str]
 ) -> None:

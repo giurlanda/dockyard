@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import ipaddress
+import math
 import re
 from collections.abc import Mapping
 from dataclasses import dataclass
@@ -10,6 +11,7 @@ from pathlib import Path
 
 from cryptography.fernet import Fernet
 
+from .projects import DEFAULT_LIMITS, GIB, MIN_CPUS, MIN_MEMORY, Limits
 from .runtime import DEFAULT_DNS
 
 TRUE = ("1", "true", "yes", "on")
@@ -59,6 +61,7 @@ class Settings:
     listen_port: int
     base_image: str
     projects_dns: tuple[str, ...]
+    limits: Limits
 
     @classmethod
     def from_env(cls, env: Mapping[str, str]) -> Settings:
@@ -123,6 +126,35 @@ class Settings:
                 f"e.g. 1.1.1.1,9.9.9.9, not {dns!r}."
             )
 
+        def number(name: str, default: float, least: float, unit: str) -> float:
+            text = env.get(name, "").strip()
+            if not text:
+                return default
+            try:
+                value = float(text)
+            except ValueError:
+                value = math.nan
+            if not (math.isfinite(value) and value >= least):
+                problems.append(
+                    f"{name} must be a number of {unit}, at least {least:g}, not {text!r}."
+                )
+            return value
+
+        max_cpus = number("DOCKYARD_PROJECT_MAX_CPUS", DEFAULT_LIMITS.max_cpus, MIN_CPUS, "CPUs")
+        max_memory = number(
+            "DOCKYARD_PROJECT_MAX_MEMORY_GIB",
+            DEFAULT_LIMITS.max_memory / GIB,
+            MIN_MEMORY / GIB,
+            "GiB",
+        )
+        max_active = number(
+            "DOCKYARD_MAX_ACTIVE_PROJECTS", DEFAULT_LIMITS.max_active, 1, "Projects per User"
+        )
+        if math.isfinite(max_active) and not max_active.is_integer():
+            problems.append(
+                f"DOCKYARD_MAX_ACTIVE_PROJECTS must be a whole number, not {max_active!r}."
+            )
+
         if problems:
             raise ConfigError(problems)
         return cls(
@@ -134,6 +166,9 @@ class Settings:
             listen_port=int(listen_port),
             base_image=env.get("DOCKYARD_BASE_IMAGE", "").strip() or DEFAULT_BASE_IMAGE,
             projects_dns=projects_dns,
+            limits=Limits(
+                max_cpus=max_cpus, max_memory=round(max_memory * GIB), max_active=int(max_active)
+            ),
         )
 
 

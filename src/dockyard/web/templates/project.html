@@ -20,6 +20,7 @@
       {% endif %}</p>
     {% if git_credential %}<p class="hint muted">{{ t("project.git_credential_inside") }}</p>{% endif %}
     <p>{{ t("project.permission_mode") }}: {{ t("permission_mode." ~ project.permission_mode) }}</p>
+    <p>{{ t("project.resources") }}: {{ t("project.resources_value", cpus="%g" | format(project.cpus), memory="%g" | format(project.memory / 1024 ** 3)) }}</p>
     {% if project.permission_mode == "bypassPermissions" %}
       <p class="warning">{{ t("permission_mode.bypass_warning") }}</p>
     {% endif %}

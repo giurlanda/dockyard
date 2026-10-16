@@ -44,7 +44,7 @@ def create_app(
     accounts = Accounts(database)
     accounts.bootstrap_first_administrator(settings.first_administrator_email)
     git_credentials = GitCredentials(database, settings.secret_key)
-    projects = Projects(database, runtime, git_credentials)
+    projects = Projects(database, runtime, git_credentials, limits=settings.limits)
     try:
         projects.resume()
     except RuntimeUnavailable as error:
