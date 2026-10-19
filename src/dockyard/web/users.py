@@ -85,6 +85,9 @@ def users_routes(
     def activation_link(email: str) -> str | None:
         return activation_links.new(email) if activation_links else None
 
+    def activation_link_to_reset(email: str) -> str | None:
+        return activation_links.new_to_reset(email) if activation_links else None
+
     def remove(email: str) -> bool:
         """Remove the User and everything they own. False if there is no such User.
 
@@ -203,6 +206,13 @@ def users_routes(
             raise HTTPException(404)
         return Response(status_code=204)
 
+    @router.post("/api/users/{email}/activation-link", status_code=201, response_model=None)
+    def new_activation_link_to_reset(_: CurrentAdministrator, email: str) -> ActivationLinkOut:
+        link = activation_link_to_reset(email)
+        if link is None:
+            raise HTTPException(404)
+        return ActivationLinkOut(activation_link=link)
+
     @router.get("/api/invitations")
     def list_invitations(_: CurrentAdministrator) -> list[InvitationOut]:
         return [InvitationOut.of(invitation) for invitation in accounts.invitations()]
@@ -256,6 +266,15 @@ def users_routes(
         request: Request, user: CurrentAdministrator, email: str
     ) -> Response:
         link = activation_link(email)
+        if link is None:
+            raise HTTPException(404)
+        return made_page(request, user, normalise_email(email), link)
+
+    @router.post("/users/{email}/activation-link", response_model=None)
+    def new_activation_link_to_reset_from_page(
+        request: Request, user: CurrentAdministrator, email: str
+    ) -> Response:
+        link = activation_link_to_reset(email)
         if link is None:
             raise HTTPException(404)
         return made_page(request, user, normalise_email(email), link)

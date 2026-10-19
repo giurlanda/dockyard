@@ -1,5 +1,5 @@
 """Local sign-in's pages: signing in with email and password, signing out, and choosing a
-password with an Activation link.
+password with an Activation link, a first one or a new one.
 
 Only the local listener has them (ADR 0004).
 """
@@ -18,7 +18,9 @@ from starlette.responses import Response
 from ..identity import SESSION_COOKIE
 from ..local_sign_in import (
     SESSION_LIFETIME,
+    ActivationLink,
     ActivationLinkInvalid,
+    ActivationLinkKind,
     LocalSignIn,
     PasswordRefused,
     SignInRefused,
@@ -42,7 +44,14 @@ class ActivationLinks:
     def new(self, email: str) -> str | None:
         """A new Activation link for the person's pending Invitation, voiding the one they had.
         None when there is no such Invitation."""
-        token = self.local_sign_in.new_activation_link(email)
+        return self._url(self.local_sign_in.new_activation_link(email))
+
+    def new_to_reset(self, email: str) -> str | None:
+        """A new Activation link with which the User chooses a new password, voiding the one they
+        had. None when there is no such User."""
+        return self._url(self.local_sign_in.new_activation_link_to_reset(email))
+
+    def _url(self, token: str | None) -> str | None:
         return f"{self.base_url}{ACTIVATE}{token}" if token else None
 
 
@@ -98,10 +107,19 @@ def local_sign_in_routes(local_sign_in: LocalSignIn, pages: Pages) -> APIRouter:
         return pages.notice(request, "activation_link_invalid", status_code=410)
 
     def activation_page(
-        request: Request, email: str, *, problem: str | None = None, status_code: int = 200
+        request: Request,
+        link: ActivationLink,
+        *,
+        problem: str | None = None,
+        status_code: int = 200,
     ) -> HTMLResponse:
         page = pages.render(
-            request, "activate.html", status_code=status_code, email=email, problem=problem
+            request,
+            "activate.html",
+            status_code=status_code,
+            email=link.email,
+            reset=link.kind == ActivationLinkKind.RESET,
+            problem=problem,
         )
         # The link is in the page's address: never told to another site. Not no-referrer, which
         # would send the form with Origin: null, refused as another site's.
@@ -110,10 +128,10 @@ def local_sign_in_routes(local_sign_in: LocalSignIn, pages: Pages) -> APIRouter:
 
     @router.get(ACTIVATE + "{token}", response_class=HTMLResponse)
     def activation_form(request: Request, token: str) -> HTMLResponse:
-        email = local_sign_in.activation_link_email(token)
-        if email is None:
+        link = local_sign_in.activation_link(token)
+        if link is None:
             return link_invalid(request)
-        return activation_page(request, email)
+        return activation_page(request, link)
 
     @router.post(ACTIVATE + "{token}", response_model=None)
     def activate(
@@ -122,15 +140,15 @@ def local_sign_in_routes(local_sign_in: LocalSignIn, pages: Pages) -> APIRouter:
         password: Annotated[str, Form()] = "",
         repeated: Annotated[str, Form()] = "",
     ) -> Response:
-        email = local_sign_in.activation_link_email(token)
-        if email is None:
+        link = local_sign_in.activation_link(token)
+        if link is None:
             return link_invalid(request)
         if password != repeated:
-            return activation_page(request, email, problem="different", status_code=422)
+            return activation_page(request, link, problem="different", status_code=422)
         try:
             session = local_sign_in.activate(token, password)
         except PasswordRefused as refused:
-            return activation_page(request, email, problem=refused.rule, status_code=422)
+            return activation_page(request, link, problem=refused.rule, status_code=422)
         except ActivationLinkInvalid:
             return link_invalid(request)
         return _with_session(RedirectResponse("/", status_code=303), session)

@@ -1,5 +1,6 @@
 """Local sign-in: Users' passwords, signing in with them, and the sessions that follow; the
-Activation links with which invited people choose their password.
+Activation links with which invited people choose their password, and Users who forgot theirs
+a new one.
 
 Only the local listener uses it (ADR 0004), but for a User who came in through the
 authentication proxy setting their first password from their own page. Neither passwords nor
@@ -62,9 +63,25 @@ class HasPassword(Exception):
     """The User already has a password: only giving it changes it."""
 
 
+class ActivationLinkKind(StrEnum):
+    INVITATION = "invitation"  # the invited person chooses their password and becomes a User
+    RESET = "reset"  # the User, who forgot their password, chooses a new one
+
+
+@dataclass(frozen=True)
+class ActivationLink:
+    email: str
+    kind: ActivationLinkKind
+
+
+# Whom each kind of Activation link is made for: the table they are found in.
+_LINKED_TO = {ActivationLinkKind.INVITATION: "invitations", ActivationLinkKind.RESET: "users"}
+
+
 class ActivationLinkInvalid(Exception):
     """The Activation link expired, was used, or was voided: by a new one, by revoking its
-    Invitation, or by the person arriving through the authentication proxy first."""
+    Invitation, by the person arriving through the authentication proxy first, or by removing
+    its User."""
 
 
 class SignInRefused(Exception):
@@ -215,52 +232,74 @@ class LocalSignIn:
     def new_activation_link(self, email: str) -> str | None:
         """The token of a new Activation link for the person's pending Invitation, replacing the
         link they had. None when there is no such Invitation."""
+        return self._new_activation_link(email, ActivationLinkKind.INVITATION)
+
+    def new_activation_link_to_reset(self, email: str) -> str | None:
+        """The token of a new Activation link with which the User chooses a new password,
+        replacing the link they had. None when there is no such User."""
+        return self._new_activation_link(email, ActivationLinkKind.RESET)
+
+    def _new_activation_link(self, email: str, kind: ActivationLinkKind) -> str | None:
         token = secrets.token_urlsafe(32)
         expires_at = self._clock.now() + ACTIVATION_LINK_LIFETIME
         with self._db.transaction() as conn:
             made = conn.execute(
                 "INSERT INTO activation_links (token_hash, email, kind, expires_at)"
-                " SELECT ?, email, 'invitation', ? FROM invitations WHERE email = ?"
+                f" SELECT ?, email, ?, ? FROM {_LINKED_TO[kind]} WHERE email = ?"
                 " ON CONFLICT (email) DO UPDATE SET token_hash = excluded.token_hash,"
                 " kind = excluded.kind, expires_at = excluded.expires_at",
-                (_token_hash(token), expires_at.isoformat(), normalise_email(email)),
+                (_token_hash(token), kind, expires_at.isoformat(), normalise_email(email)),
             ).rowcount
         return token if made else None
 
-    def activation_link_email(self, token: str) -> str | None:
-        """The email the Activation link is for; None when it no longer works."""
+    def activation_link(self, token: str) -> ActivationLink | None:
+        """Who the Activation link is for, and why; None when it no longer works."""
         with self._db.transaction() as conn:
             row = conn.execute(
-                f"SELECT email FROM activation_links WHERE {_LIVE_LINK}",
+                f"SELECT email, kind FROM activation_links WHERE {_LIVE_LINK}",
                 (_token_hash(token), self._clock.now().isoformat()),
             ).fetchone()
-        return row["email"] if row else None
+        return ActivationLink(row["email"], ActivationLinkKind(row["kind"])) if row else None
 
     def activate(self, token: str, password: str) -> str:
-        """Use up the Activation link and its Invitation: the person becomes a User with this
-        password. A new session's token.
+        """Use up the Activation link. One for an Invitation uses it up too: the person becomes a
+        User with this password. One for a reset gives the User this password and signs them out
+        everywhere. A new session's token.
 
         Raises ActivationLinkInvalid, PasswordRefused.
         """
-        email = self.activation_link_email(token)
-        if email is None:
+        link = self.activation_link(token)
+        if link is None:
             raise ActivationLinkInvalid
+        email = link.email
         hashed = _hash_password(_allowed(password, email))
         now = self._clock.now()
         with self._db.transaction() as conn:
-            # Whichever comes first, this or the person arriving through the authentication proxy,
-            # uses up the Invitation; a link opened twice at once works once.
+            # A link opened twice at once works once.
             used = conn.execute(
-                f"DELETE FROM activation_links WHERE {_LIVE_LINK}",
+                f"DELETE FROM activation_links WHERE {_LIVE_LINK} RETURNING kind",
                 (_token_hash(token), now.isoformat()),
-            ).rowcount
-            invited = conn.execute("DELETE FROM invitations WHERE email = ?", (email,)).rowcount
-            if not (used and invited):
+            ).fetchone()
+            if used is None:
                 raise ActivationLinkInvalid
-            conn.execute(
-                "INSERT INTO users (email, role, password) VALUES (?, ?, ?)",
-                (email, Role.USER, hashed),
-            )
+            if used["kind"] == ActivationLinkKind.INVITATION:
+                # Whichever comes first, this or the person arriving through the authentication
+                # proxy, uses up the Invitation.
+                if not conn.execute("DELETE FROM invitations WHERE email = ?", (email,)).rowcount:
+                    raise ActivationLinkInvalid
+                conn.execute(
+                    "INSERT INTO users (email, role, password) VALUES (?, ?, ?)",
+                    (email, Role.USER, hashed),
+                )
+            else:
+                # Whoever knew the old password is signed out. A Second factor stays: the link
+                # alone does not hand over an account it protects.
+                changed = conn.execute(
+                    "UPDATE users SET password = ? WHERE email = ?", (hashed, email)
+                ).rowcount
+                if not changed:
+                    raise ActivationLinkInvalid
+                conn.execute("DELETE FROM sessions WHERE email = ?", (email,))
             return _new_session(conn, email, now)
 
     def sign_in(self, email: str, password: str, client: str) -> str:

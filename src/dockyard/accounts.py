@@ -135,9 +135,9 @@ class Accounts:
         return _user(row) if row else None
 
     def remove_user(self, email: str) -> RemovedUser | None:
-        """Remove the User with what Dockyard records for them: their Projects and Git
-        Credentials. What the Runtime keeps for them is left to the caller. None if there is no
-        such User.
+        """Remove the User with what Dockyard records for them: their Projects, Git Credentials
+        and Activation link. What the Runtime keeps for them is left to the caller. None if there
+        is no such User.
 
         Raises LastAdministrator.
         """
@@ -148,6 +148,7 @@ class Accounts:
                 f"DELETE FROM projects WHERE owner = {owner} RETURNING id", (email,)
             ).fetchall()
             conn.execute(f"DELETE FROM git_credentials WHERE owner = {owner}", (email,))
+            conn.execute("DELETE FROM activation_links WHERE email = ?", (email,))
             row = conn.execute(
                 f"DELETE FROM users WHERE email = ? AND {_NOT_THE_LAST_ADMINISTRATOR}"
                 " RETURNING runtime_id",
@@ -206,7 +207,7 @@ _NOT_THE_LAST_ADMINISTRATOR = (
 def _end_invitation(conn: sqlite3.Connection, email: str) -> bool:
     """Used up or revoked, its Activation link goes with it. False if there is no such
     Invitation."""
-    conn.execute("DELETE FROM activation_links WHERE email = ?", (email,))
+    conn.execute("DELETE FROM activation_links WHERE email = ? AND kind = 'invitation'", (email,))
     return conn.execute("DELETE FROM invitations WHERE email = ?", (email,)).rowcount > 0
 
 

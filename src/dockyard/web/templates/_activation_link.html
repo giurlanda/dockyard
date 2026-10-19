@@ -1,0 +1,12 @@
+{# The Activation link just made for `email`, shown once with a copy button; `hint` says what it does. #}
+<div class="activation-link">
+  <label for="activation-link">{{ t("users.activation_link.label", email=email) }}</label>
+  <div class="code-row">
+    <input id="activation-link" value="{{ made[1] }}" readonly spellcheck="false"
+           aria-describedby="activation-link-hint">
+    <button type="button" data-copy="activation-link">{{ t("users.activation_link.copy") }}</button>
+  </div>
+  <p class="hint muted" id="activation-link-hint">{{ t(hint) }}</p>
+  <p class="hint outcome good" role="status" data-copied="activation-link" hidden>
+    {{- t("users.activation_link.copied") }}</p>
+</div>

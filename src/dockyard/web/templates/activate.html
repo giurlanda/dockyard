@@ -1,12 +1,13 @@
 {% extends "base.html" %}
-{% block title %}{{ t("activate.title") }}{% endblock %}
+{% set texts = "activate.reset" if reset else "activate" %}
+{% block title %}{{ t(texts ~ ".title") }}{% endblock %}
 {% block header %}<div class="who">
   {% include "_languages.html" %}
   </div>{% endblock %}
 {% block content %}
   <section class="panel sign-in" aria-labelledby="activate">
-    <h1 id="activate">{{ t("activate.title") }}</h1>
-    <p>{{ t("activate.explain", email=email) }}</p>
+    <h1 id="activate">{{ t(texts ~ ".title") }}</h1>
+    <p>{{ t(texts ~ ".explain", email=email) }}</p>
     {% if problem %}<p class="warning" role="alert">{{ t("activate.refused." ~ problem) }}</p>{% endif %}
     <form class="fields" method="post">
       <input type="email" name="email" value="{{ email }}" autocomplete="username" hidden>

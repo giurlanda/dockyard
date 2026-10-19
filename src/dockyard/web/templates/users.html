@@ -35,17 +35,9 @@
                 {{ t("users.invitations.revoke") }}</button>
             </form>
             {% if made and made[0] == invitation.email %}
-              <div class="activation-link">
-                <label for="activation-link">{{ t("users.activation_link.label", email=invitation.email) }}</label>
-                <div class="code-row">
-                  <input id="activation-link" value="{{ made[1] }}" readonly spellcheck="false"
-                         aria-describedby="activation-link-hint">
-                  <button type="button" data-copy="activation-link">{{ t("users.activation_link.copy") }}</button>
-                </div>
-                <p class="hint muted" id="activation-link-hint">{{ t("users.activation_link.hint") }}</p>
-                <p class="hint outcome good" role="status" data-copied="activation-link" hidden>
-                  {{- t("users.activation_link.copied") }}</p>
-              </div>
+              {% with email=invitation.email, hint="users.activation_link.hint" %}
+                {% include "_activation_link.html" %}
+              {% endwith %}
             {% endif %}
           </li>
         {% endfor %}
@@ -63,6 +55,17 @@
           <span class="badge">{{ t("role." ~ listed.role) }}</span>
           {% if listed.privileged_projects %}<span class="badge bad">{{ t("user.privileged.heading") }}</span>{% endif %}
           {% if listed.email == user.email %}<span class="muted">{{ t("users.you") }}</span>{% endif %}
+          {% if activation_links %}
+            <form method="post" action="/users/{{ listed.email|urlencode }}/activation-link">
+              <button aria-label="{{ t('users.activation_link.new_email', email=listed.email) }}">
+                {{ t("users.activation_link.new") }}</button>
+            </form>
+          {% endif %}
+          {% if made and made[0] == listed.email %}
+            {% with email=listed.email, hint="users.activation_link.hint_reset" %}
+              {% include "_activation_link.html" %}
+            {% endwith %}
+          {% endif %}
         </li>
       {% endfor %}
     </ul>
