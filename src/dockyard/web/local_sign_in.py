@@ -52,10 +52,7 @@ def local_sign_in_routes(local_sign_in: LocalSignIn, pages: Pages) -> APIRouter:
     def sign_in_page(
         request: Request, *, next: str, email: str = "", refused: SignInRefused | None = None
     ) -> HTMLResponse:
-        # Whole seconds, rounded up: trying again when told never comes too early.
-        retry_in = None
-        if refused and refused.retry_in:
-            retry_in = math.ceil(refused.retry_in.total_seconds())
+        retry_in = seconds_to_wait(refused) if refused else None
         slowed_down = isinstance(refused, SlowedDown)
         page = pages.render(
             request,
@@ -139,6 +136,11 @@ def local_sign_in_routes(local_sign_in: LocalSignIn, pages: Pages) -> APIRouter:
         return _with_session(RedirectResponse("/", status_code=303), session)
 
     return router
+
+
+def seconds_to_wait(refused: SignInRefused) -> int | None:
+    """Whole seconds, rounded up: trying again when told never comes too early."""
+    return math.ceil(refused.retry_in.total_seconds()) if refused.retry_in else None
 
 
 def _with_session(response: RedirectResponse, token: str | None) -> RedirectResponse:

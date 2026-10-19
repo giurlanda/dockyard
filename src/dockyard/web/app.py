@@ -48,6 +48,7 @@ from .guard import (
 from .i18n import LANGUAGE_COOKIE, Language
 from .images import images_routes
 from .local_sign_in import ACTIVATE, SIGN_IN, SIGN_OUT, ActivationLinks, local_sign_in_routes
+from .own_page import own_page_routes
 from .pages import Pages, same_site_path
 from .projects import projects_routes
 from .users import users_routes
@@ -130,6 +131,7 @@ def create_instance(
             images,
             upkeep,
             activation_links,
+            passwords=local_sign_in if settings.local else None,
         )
         listeners[ListenerName.TUNNEL] = Listener(
             tunnel, settings.listen_host, settings.listen_port
@@ -146,6 +148,7 @@ def create_instance(
             activation_links,
             # Docker's networks as they are at start: Docker gives a new one a range of its own.
             clients=ClientNetworks(admitted=settings.local.networks, refused=runtime.networks()),
+            passwords=local_sign_in,
             local_sign_in=local_sign_in,
         )
         listeners[ListenerName.LOCAL] = Listener(
@@ -194,6 +197,7 @@ def _listener_app(
     activation_links: ActivationLinks | None,  # None: Local sign-in is off
     *,
     clients: ClientNetworks | None = None,
+    passwords: LocalSignIn | None = None,  # Users manage their password with it; None: it is off
     local_sign_in: LocalSignIn | None = None,  # people sign in on this listener with it
 ) -> FastAPI:
     pages = Pages(local_sign_in=local_sign_in is not None)
@@ -262,6 +266,7 @@ def _listener_app(
     def me(user: CurrentUser) -> dict[str, str]:
         return {"email": user.email, "role": user.role}
 
+    app.include_router(own_page_routes(pages, passwords, local=local_sign_in is not None))
     app.include_router(claude_account_routes(runtime, projects, pages))
     app.include_router(projects_routes(projects, git_credentials, images, pages))
     app.include_router(git_credentials_routes(git_credentials, pages))

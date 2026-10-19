@@ -215,3 +215,37 @@ def test_the_activation_page_fits_a_phone_screen(
     finally:
         administrator.close()
         person.close()
+
+
+NEW_PASSWORD = "a brand new password of mine"
+
+
+@pytest.mark.parametrize(
+    ("language", "saved"),
+    [("English", "Your password is saved."), ("Italiano", "La password è salvata.")],
+)
+def test_a_user_changes_their_password_from_their_page_on_a_phone(
+    browser: Browser, local_url: str, language: str, saved: str
+) -> None:
+    context = browser.new_context(
+        base_url=local_url,
+        ignore_https_errors=True,
+        locale="en-US",
+        viewport=PHONE,  # type: ignore[arg-type]
+    )
+    page = context.new_page()
+    try:
+        sign_in(page, ADMINISTRATOR, PASSWORD)
+        page.get_by_role("button", name=language).click()
+        expect(page.get_by_role("button", name=language)).to_have_attribute("aria-pressed", "true")
+        page.get_by_test_id("user-email").click()
+        assert fits_the_screen(page)
+        page.locator("#current").fill(PASSWORD)
+        page.locator("#password").fill(NEW_PASSWORD)
+        page.locator("#repeated").fill(NEW_PASSWORD)
+        page.locator("#repeated").press("Enter")
+        expect(page.get_by_role("status")).to_contain_text(saved)
+        expect(page.locator("#current")).to_be_visible()
+        assert fits_the_screen(page)
+    finally:
+        context.close()

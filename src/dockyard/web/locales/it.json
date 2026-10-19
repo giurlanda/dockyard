@@ -338,5 +338,18 @@
   "users.activation_link.copied": "Copiato.",
   "users.activation_link.hint": "Consegnalo tu, attraverso un canale di cui ti fidi: chi lo ha può scegliere la password. Funziona una volta, per 7 giorni, ed è mostrato solo ora; se si perde, creane uno nuovo.",
   "users.activation_link.new": "Nuovo Link di attivazione",
-  "users.activation_link.new_email": "Nuovo Link di attivazione per {email}"
+  "users.activation_link.new_email": "Nuovo Link di attivazione per {email}",
+  "own_page.link": "La tua pagina",
+  "own_page.password.heading": "Password",
+  "own_page.password.none": "Non hai ancora una password. Impostane una per accedere anche dall'indirizzo locale, con la tua email e quella password.",
+  "own_page.password.set": "Hai una password: puoi accedere dall'indirizzo locale con la tua email e quella password.",
+  "own_page.password.change_locally": "Per cambiarla, apri questa pagina dall'indirizzo locale e inserisci la password attuale.",
+  "own_page.password.saved": "La password è salvata. Le tue altre sessioni di accesso sono state chiuse.",
+  "own_page.password.current": "Password attuale",
+  "own_page.password.new": "Nuova password",
+  "own_page.password.repeated": "Ripeti la nuova password",
+  "own_page.password.choose": "Imposta la password",
+  "own_page.password.change": "Cambia la password",
+  "own_page.password.wrong_current": "La password attuale è sbagliata.",
+  "own_page.password.already_set": "Hai già una password: si cambia solo inserendola, dall'indirizzo locale."
 }

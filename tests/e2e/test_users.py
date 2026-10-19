@@ -79,7 +79,7 @@ def test_the_last_administrator_is_told_why_they_cannot_be_demoted(open_as: Open
     administrator = open_as(ADMINISTRATOR)
     administrator.goto("/users")
 
-    administrator.get_by_role("link", name=ADMINISTRATOR).click()
+    administrator.get_by_role("main").get_by_role("link", name=ADMINISTRATOR).click()
     administrator.get_by_role("button", name="Remove the Administrator role").click()
 
     expect(administrator.get_by_role("alert")).to_contain_text("last Administrator")

@@ -1,0 +1,4 @@
+{% if retry_in %}<p class="warning" role="alert">
+  {%- if retry_in < 60 %}{{ t("local_sign_in.slowed_down.seconds", seconds=retry_in) }}
+  {%- else %}{{ t("local_sign_in.slowed_down.minutes", minutes=(retry_in / 60) | round(method="ceil") | int) }}
+  {%- endif %}</p>{% endif %}

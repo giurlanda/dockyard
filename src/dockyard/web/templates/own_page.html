@@ -1,0 +1,49 @@
+{% extends "base.html" %}
+{% block title %}{{ user.email }}{% endblock %}
+{% block header %}{% include "_user.html" %}{% endblock %}
+{% block content %}
+  <section class="panel">
+    <div class="panel-heading">
+      <h1>{{ user.email }}</h1>
+      <span class="badge">{{ t("role." ~ user.role) }}</span>
+    </div>
+    <p class="muted">{{ t("user.role." ~ user.role) }}</p>
+    <p><a href="/">{{ t("notice.home") }}</a></p>
+  </section>
+  {% if passwords %}
+  <section class="panel" aria-labelledby="password-heading">
+    <h2 id="password-heading">{{ t("own_page.password.heading") }}</h2>
+    {% if saved %}<p class="outcome good" role="status">{{ t("own_page.password.saved") }}</p>{% endif %}
+    <p {% if not has_password %}class="muted"{% endif %}>
+      {{ t("own_page.password.set" if has_password else "own_page.password.none") }}</p>
+    {% if problem %}<p class="warning" role="alert">{{ t(problem) }}</p>{% endif %}
+    {% include "_slowed_down.html" %}
+    {% if has_password and not local_sign_in %}
+    <p>{{ t("own_page.password.change_locally") }}</p>
+    {% else %}
+    <form class="fields" method="post" action="/me/password">
+      <input type="email" name="email" value="{{ user.email }}" autocomplete="username" hidden>
+      {% if has_password %}
+      <div class="field">
+        <label for="current">{{ t("own_page.password.current") }}</label>
+        <input id="current" name="current" type="password" autocomplete="current-password" required>
+      </div>
+      {% endif %}
+      <div class="field">
+        <label for="password">{{ t("own_page.password.new") }}</label>
+        <input id="password" name="password" type="password" autocomplete="new-password"
+               minlength="12" aria-describedby="rules" required>
+        <p class="hint muted" id="rules">{{ t("activate.rules") }}</p>
+      </div>
+      <div class="field">
+        <label for="repeated">{{ t("own_page.password.repeated") }}</label>
+        <input id="repeated" name="repeated" type="password" autocomplete="new-password"
+               minlength="12" required>
+      </div>
+      <div class="actions"><button class="primary">
+        {{ t("own_page.password.change" if has_password else "own_page.password.choose") }}</button></div>
+    </form>
+    {% endif %}
+  </section>
+  {% endif %}
+{% endblock %}

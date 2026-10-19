@@ -1,8 +1,9 @@
 """Local sign-in: Users' passwords, signing in with them, and the sessions that follow; the
 Activation links with which invited people choose their password.
 
-Only the local listener uses it (ADR 0004). Neither passwords nor session tokens are stored: only
-what proves them.
+Only the local listener uses it (ADR 0004), but for a User who came in through the
+authentication proxy setting their first password from their own page. Neither passwords nor
+session tokens are stored: only what proves them.
 """
 
 from __future__ import annotations
@@ -14,9 +15,11 @@ import logging
 import secrets
 import sqlite3
 import threading
+from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from enum import StrEnum
+from typing import TypeVar
 
 from .accounts import Role, normalise_email
 from .clock import Clock
@@ -33,6 +36,7 @@ FIRST_DELAY = timedelta(seconds=30)
 LONGEST_DELAY = timedelta(minutes=15)
 FAILURES_FORGOTTEN_AFTER = timedelta(days=1)  # a day without one: counting starts again
 ACTIVATION_LINK_LIFETIME = timedelta(days=7)
+T = TypeVar("T")
 # The Activation link with this token hash that has not expired at this time.
 _LIVE_LINK = "token_hash = ? AND julianday(expires_at) > julianday(?)"
 
@@ -52,6 +56,10 @@ class PasswordRefused(Exception):
 
 class NotAUser(Exception):
     """Only a User has a password."""
+
+
+class HasPassword(Exception):
+    """The User already has a password: only giving it changes it."""
 
 
 class ActivationLinkInvalid(Exception):
@@ -148,6 +156,62 @@ class LocalSignIn:
                 raise NotAUser
             conn.execute("DELETE FROM sessions WHERE email = ?", (email,))
 
+    def has_password(self, email: str) -> bool:
+        return self._stored_password(normalise_email(email)) is not None
+
+    def set_first_password(self, email: str, password: str) -> None:
+        """The User, who has no password yet, sets one from their own page.
+
+        Raises PasswordRefused, HasPassword, NotAUser.
+        """
+        email = normalise_email(email)
+        self._replace_password(email, None, _hash_password(_allowed(password, email)), keep=None)
+
+    def change_password(
+        self, email: str, current: str, new: str, *, client: str, keep: str | None
+    ) -> None:
+        """The User, from their own page, replaces their password by giving it. A wrong one is a
+        failed sign-in. Every other Sign-in session of theirs ends: all but the one `keep` is
+        the token of.
+
+        Raises SignInRefused, SlowedDown, PasswordRefused, HasPassword (changed meanwhile),
+        NotAUser.
+        """
+        email = normalise_email(email)
+
+        def checked(_: datetime) -> str | None:
+            stored = self._stored_password(email)
+            return stored if stored and _password_matches(current, stored) else None
+
+        stored = self._attempt(email, client, "Password change", checked)
+        self._replace_password(email, stored, _hash_password(_allowed(new, email)), keep=keep)
+
+    def _replace_password(
+        self, email: str, stored: str | None, hashed: str, *, keep: str | None
+    ) -> None:
+        """Only the password that was checked is replaced, not one set meanwhile.
+
+        Raises HasPassword, NotAUser.
+        """
+        with self._db.transaction() as conn:
+            changed = conn.execute(
+                "UPDATE users SET password = ? WHERE email = ? AND password IS ?",
+                (hashed, email, stored),
+            ).rowcount
+            if not changed:
+                if conn.execute("SELECT 1 FROM users WHERE email = ?", (email,)).fetchone():
+                    raise HasPassword
+                raise NotAUser
+            conn.execute(
+                "DELETE FROM sessions WHERE email = ? AND token_hash IS NOT ?",
+                (email, keep and _token_hash(keep)),
+            )
+
+    def _stored_password(self, email: str) -> str | None:
+        with self._db.transaction() as conn:
+            row = conn.execute("SELECT password FROM users WHERE email = ?", (email,)).fetchone()
+        return row["password"] if row else None
+
     def new_activation_link(self, email: str) -> str | None:
         """The token of a new Activation link for the person's pending Invitation, replacing the
         link they had. None when there is no such Invitation."""
@@ -206,25 +270,35 @@ class LocalSignIn:
         Raises SignInRefused, SlowedDown.
         """
         email = normalise_email(email)
+        return self._attempt(
+            email, client, "Local sign-in", lambda now: self._session_if_right(email, password, now)
+        )
+
+    def _attempt(
+        self, email: str, client: str, what: str, check: Callable[[datetime], T | None]
+    ) -> T:
+        """What `check` gives when the password is right; None is a failure, counted for the
+        email and for the client address. Slowed down once failures add up.
+
+        Raises SignInRefused, SlowedDown.
+        """
         email_key, client_key = f"email:{email}", f"client:{client}"
         with self._attempts:
             now = self._clock.now()
             if retry_in := self._retry_in((email_key, client_key), now):
-                log.warning("Local sign-in slowed down for %r from %s", email, client)
+                log.warning("%s slowed down for %r from %s", what, email, client)
                 raise SlowedDown(retry_in)
-            token = self._session_if_right(email, password, now)
-            if token is None:
-                log.warning("Local sign-in failed for %r from %s", email, client)
+            result = check(now)
+            if result is None:
+                log.warning("%s failed for %r from %s", what, email, client)
                 raise SignInRefused(self._count_failure((email_key, client_key), now))
             with self._db.transaction() as conn:
                 conn.execute("DELETE FROM sign_in_throttling WHERE key = ?", (email_key,))
-            return token
+            return result
 
     def _session_if_right(self, email: str, password: str, now: datetime) -> str | None:
         """A new session's token when the password is the User's; None otherwise."""
-        with self._db.transaction() as conn:
-            row = conn.execute("SELECT password FROM users WHERE email = ?", (email,)).fetchone()
-        stored = row["password"] if row else None
+        stored = self._stored_password(email)
         if not _password_matches(password, stored or self._nobodys_password):
             return None
         if stored is None:

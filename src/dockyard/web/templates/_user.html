@@ -1,5 +1,5 @@
   <div class="who">
-    <span data-testid="user-email">{{ user.email }}</span>
+    <a href="/me" data-testid="user-email" title="{{ t('own_page.link') }}">{{ user.email }}</a>
     <span class="badge" data-testid="user-role">{{ t("role." ~ user.role) }}</span>
     {% include "_languages.html" %}
     {% if local_sign_in %}

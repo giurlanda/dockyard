@@ -338,5 +338,18 @@
   "users.activation_link.copied": "Copied.",
   "users.activation_link.hint": "Hand it over yourself, through a channel you trust: whoever has it can choose the password. It works once, for 7 days, and is shown only now; make a new one if it gets lost.",
   "users.activation_link.new": "New Activation link",
-  "users.activation_link.new_email": "New Activation link for {email}"
+  "users.activation_link.new_email": "New Activation link for {email}",
+  "own_page.link": "Your page",
+  "own_page.password.heading": "Password",
+  "own_page.password.none": "You have no password yet. Set one to sign in on the local address too, with your email and that password.",
+  "own_page.password.set": "You have a password: you can sign in on the local address with your email and that password.",
+  "own_page.password.change_locally": "To change it, open this page on the local address and give the current password.",
+  "own_page.password.saved": "Your password is saved. Your other sign-in sessions are signed out.",
+  "own_page.password.current": "Current password",
+  "own_page.password.new": "New password",
+  "own_page.password.repeated": "Repeat the new password",
+  "own_page.password.choose": "Set the password",
+  "own_page.password.change": "Change the password",
+  "own_page.password.wrong_current": "The current password is wrong.",
+  "own_page.password.already_set": "You already have a password: it changes only by giving it, on the local address."
 }
