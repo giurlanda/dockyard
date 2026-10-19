@@ -217,6 +217,19 @@ def test_publishing_the_local_port_on_every_interface_starts_with_a_warning(
     assert "every interface" in result.stderr
 
 
+def test_activation_links_that_point_to_every_interface_start_with_a_warning(
+    tmp_path: Path,
+) -> None:
+    env = {**instance_env(tmp_path), **LOCAL_SIGN_IN, "DOCKYARD_LOCAL_ADDRESS": "0.0.0.0"}
+
+    warned = start_dockyard(env).stderr
+    named = start_dockyard({**env, "DOCKYARD_LOCAL_URL": "https://dockyard.lan:8443"}).stderr
+
+    assert "Activation links" in warned
+    assert "DOCKYARD_LOCAL_URL" in warned
+    assert "Activation links" not in named
+
+
 FINGERPRINT = re.compile(r"SHA-256 fingerprint: ((?:[0-9A-F]{2}:){31}[0-9A-F]{2})")
 
 

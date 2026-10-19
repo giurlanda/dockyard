@@ -133,3 +133,5 @@ button.danger { border-color: var(--bad); color: var(--bad); }
 .owned .stats { margin-top: 8px; }
 .owned .actions form { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 16px; }
 .sign-in { max-width: 420px; margin: 8vh auto 0; }
+.activation-link { flex-basis: 100%; margin-top: 8px; }
+.activation-link label { display: block; font-weight: 600; margin-bottom: 4px; }

@@ -126,3 +126,92 @@ def test_the_sign_in_page_fits_a_phone_screen(
         assert fits_the_screen(page)
     finally:
         context.close()
+
+
+INVITED = "invited.person@dockyard.example.com"
+INVITED_PASSWORD = "a password of my own choosing"
+
+
+def sign_in(page: Page, email: str, password: str) -> None:
+    page.goto("/sign-in")
+    page.get_by_label("Email").fill(email)
+    page.get_by_label("Password").fill(password)
+    page.get_by_role("button", name="Sign in").click()
+
+
+def invite_and_copy_the_activation_link(page: Page) -> str:
+    """As the Administrator: invite the person, copy their Activation link, return it."""
+    sign_in(page, ADMINISTRATOR, PASSWORD)
+    page.get_by_role("link", name="Users and Invitations").click()
+    page.get_by_label("Email").fill(INVITED)
+    page.get_by_role("button", name="Invite").click()
+    page.get_by_role("button", name="Copy").click()
+    expect(page.get_by_role("status")).to_have_text("Copied.")
+    link: str = page.evaluate("navigator.clipboard.readText()")
+    expect(page.get_by_role("textbox", name=f"Activation link for {INVITED}")).to_have_value(link)
+    return link
+
+
+def test_an_invited_person_chooses_a_password_with_the_activation_link_and_lands_on_their_dashboard(
+    browser: Browser, local_url: str
+) -> None:
+    administrator = browser.new_context(
+        base_url=local_url,
+        ignore_https_errors=True,
+        locale="en-US",
+        permissions=["clipboard-read", "clipboard-write"],
+    )
+    person = browser.new_context(ignore_https_errors=True, locale="en-US")
+    try:
+        link = invite_and_copy_the_activation_link(administrator.new_page())
+
+        page = person.new_page()
+        page.goto(link)
+        expect(page.get_by_role("heading", name="Choose your password")).to_be_visible()
+        expect(page.get_by_text("At least 12 characters, and not your email.")).to_be_visible()
+        page.get_by_label("Password", exact=True).fill(INVITED_PASSWORD)
+        page.get_by_label("Repeat the password").fill(INVITED_PASSWORD)
+        page.get_by_role("button", name="Set the password and sign in").click()
+
+        expect(page.get_by_test_id("user-email")).to_have_text(INVITED)
+        expect(page.get_by_role("heading", name="Projects")).to_be_visible()
+        page.goto(link)
+        expect(page.get_by_text("Ask an Administrator for a new one.")).to_be_visible()
+    finally:
+        administrator.close()
+        person.close()
+
+
+@pytest.mark.parametrize("language", ["English", "Italiano"])
+def test_the_activation_page_fits_a_phone_screen(
+    browser: Browser, local_url: str, language: str
+) -> None:
+    administrator = browser.new_context(
+        base_url=local_url,
+        ignore_https_errors=True,
+        locale="en-US",
+        viewport=PHONE,  # type: ignore[arg-type]
+        permissions=["clipboard-read", "clipboard-write"],
+    )
+    person = browser.new_context(
+        ignore_https_errors=True,
+        locale="en-US",
+        viewport=PHONE,  # type: ignore[arg-type]
+    )
+    try:
+        page = administrator.new_page()
+        link = invite_and_copy_the_activation_link(page)
+        assert fits_the_screen(page)
+
+        page = person.new_page()
+        page.goto(link)
+        page.get_by_role("button", name=language).click()
+        expect(page.get_by_role("button", name=language)).to_have_attribute("aria-pressed", "true")
+        assert fits_the_screen(page)
+        page.locator("#password").fill(INVITED_PASSWORD)
+        page.locator("#repeated").fill(INVITED_PASSWORD)
+        page.locator("#repeated").press("Enter")
+        expect(page.get_by_test_id("user-email")).to_have_text(INVITED)
+    finally:
+        administrator.close()
+        person.close()

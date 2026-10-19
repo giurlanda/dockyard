@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import asyncio
+import logging
+import re
 import signal
 import threading
 from collections.abc import Generator, Iterable
@@ -10,9 +12,27 @@ from contextlib import contextmanager, suppress
 
 import uvicorn
 
-from .web import Listener
+from .web import ACTIVATE, Listener
 
 STOP_SIGNALS = (signal.SIGINT, signal.SIGTERM)
+_ACTIVATION_TOKEN = re.compile(rf"^{re.escape(ACTIVATE)}[^?]*")
+
+
+class _HideActivationTokens(logging.Filter):
+    """The access log never shows an Activation link's token: whoever reads the log could
+    otherwise choose the person's password."""
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        # uvicorn logs each request with the arguments client, method, path, version, status.
+        if isinstance(record.args, tuple) and len(record.args) == 5:
+            client, method, path, version, status = record.args
+            if isinstance(path, str):
+                path = _ACTIVATION_TOKEN.sub(f"{ACTIVATE}…", path)
+            record.args = (client, method, path, version, status)
+        return True
+
+
+_HIDE_ACTIVATION_TOKENS = _HideActivationTokens()
 
 
 class _Server(uvicorn.Server):
@@ -38,6 +58,8 @@ class Servers:
             )
             for listener in listeners
         ]
+        # After the configs: each one configures the log afresh. Added once, however many times.
+        logging.getLogger("uvicorn.access").addFilter(_HIDE_ACTIVATION_TOKENS)
         self._signals: list[int] = []
 
     @property

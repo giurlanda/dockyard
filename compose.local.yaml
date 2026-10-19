@@ -10,6 +10,7 @@ services:
       DOCKYARD_LOCAL_ADDRESS: ${DOCKYARD_LOCAL_ADDRESS:?Set DOCKYARD_LOCAL_ADDRESS in .env to the host's IPv4 address on the LAN or VPN}
       DOCKYARD_LOCAL_NETWORKS: ${DOCKYARD_LOCAL_NETWORKS:-}
       DOCKYARD_LOCAL_URL: ${DOCKYARD_LOCAL_URL:-}
+      DOCKYARD_LOCAL_HOST_PORT: ${DOCKYARD_LOCAL_HOST_PORT:-8443}
     # Only on the address named: an explicit IPv4 address is never published on IPv6.
     ports:
       - "${DOCKYARD_LOCAL_ADDRESS}:${DOCKYARD_LOCAL_HOST_PORT:-8443}:8443"

@@ -81,7 +81,7 @@ class Accounts:
         if not self._invited(email):
             return None  # no write for every request of a stranger
         with self._db.transaction() as conn:
-            if conn.execute("DELETE FROM invitations WHERE email = ?", (email,)).rowcount:
+            if _end_invitation(conn, email):
                 conn.execute("INSERT INTO users (email, role) VALUES (?, ?)", (email, Role.USER))
         return self.find_user(email)
 
@@ -186,10 +186,7 @@ class Accounts:
     def revoke_invitation(self, email: str) -> bool:
         """False if there is no such Invitation."""
         with self._db.transaction() as conn:
-            revoked = conn.execute(
-                "DELETE FROM invitations WHERE email = ?", (normalise_email(email),)
-            )
-        return revoked.rowcount > 0
+            return _end_invitation(conn, normalise_email(email))
 
 
 def valid_email(email: str) -> str:
@@ -204,6 +201,13 @@ _USER_COLUMNS = "email, role, runtime_id, privileged_projects"
 _NOT_THE_LAST_ADMINISTRATOR = (
     "(role = 'user' OR (SELECT count(*) FROM users WHERE role = 'administrator') > 1)"
 )
+
+
+def _end_invitation(conn: sqlite3.Connection, email: str) -> bool:
+    """Used up or revoked, its Activation link goes with it. False if there is no such
+    Invitation."""
+    conn.execute("DELETE FROM activation_links WHERE email = ?", (email,))
+    return conn.execute("DELETE FROM invitations WHERE email = ?", (email,)).rowcount > 0
 
 
 def _exists(conn: sqlite3.Connection, email: str) -> bool:

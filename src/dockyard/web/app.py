@@ -47,7 +47,7 @@ from .guard import (
 )
 from .i18n import LANGUAGE_COOKIE, Language
 from .images import images_routes
-from .local_sign_in import SIGN_IN, SIGN_OUT, local_sign_in_routes
+from .local_sign_in import ACTIVATE, SIGN_IN, SIGN_OUT, ActivationLinks, local_sign_in_routes
 from .pages import Pages, same_site_path
 from .projects import projects_routes
 from .users import users_routes
@@ -115,6 +115,9 @@ def create_instance(
         log.warning("Cannot pick up the clones and Projects in progress: %s", error)
     images.resume()
     upkeep = _Upkeep(projects, images)
+    activation_links = (
+        ActivationLinks(local_sign_in, settings.local.base_url) if settings.local else None
+    )
 
     listeners: dict[ListenerName, Listener] = {}
     if settings.identity is not None:
@@ -126,6 +129,7 @@ def create_instance(
             projects,
             images,
             upkeep,
+            activation_links,
         )
         listeners[ListenerName.TUNNEL] = Listener(
             tunnel, settings.listen_host, settings.listen_port
@@ -139,6 +143,7 @@ def create_instance(
             projects,
             images,
             upkeep,
+            activation_links,
             # Docker's networks as they are at start: Docker gives a new one a range of its own.
             clients=ClientNetworks(admitted=settings.local.networks, refused=runtime.networks()),
             local_sign_in=local_sign_in,
@@ -186,6 +191,7 @@ def _listener_app(
     projects: Projects,
     images: Images,
     upkeep: _Upkeep,
+    activation_links: ActivationLinks | None,  # None: Local sign-in is off
     *,
     clients: ClientNetworks | None = None,
     local_sign_in: LocalSignIn | None = None,  # people sign in on this listener with it
@@ -204,7 +210,7 @@ def _listener_app(
         accounts=accounts,
         refuse=pages.refusal,
         clients=clients,
-        sign_in=SignInPage(SIGN_IN, public=(SIGN_IN, SIGN_OUT, "/language", "/static/"))
+        sign_in=SignInPage(SIGN_IN, public=(SIGN_IN, SIGN_OUT, ACTIVATE, "/language", "/static/"))
         if local_sign_in
         else None,
     )
@@ -259,7 +265,7 @@ def _listener_app(
     app.include_router(claude_account_routes(runtime, projects, pages))
     app.include_router(projects_routes(projects, git_credentials, images, pages))
     app.include_router(git_credentials_routes(git_credentials, pages))
-    app.include_router(users_routes(accounts, projects, runtime, pages))
+    app.include_router(users_routes(accounts, projects, runtime, pages, activation_links))
     app.include_router(all_projects_routes(projects, pages))
     app.include_router(images_routes(images, pages))
     if local_sign_in:

@@ -65,10 +65,16 @@ class LocalSignIn:
     address: ipaddress.IPv4Address  # of the host, where the port is published
     networks: tuple[ipaddress.IPv4Network, ...]  # the Local networks
     url: str | None  # where people open it, when not at the address
+    published_port: int  # on the host, at the address
 
     @property
     def on_every_interface(self) -> bool:
         return self.address == EVERY_INTERFACE
+
+    @property
+    def base_url(self) -> str:
+        """Where people open Local sign-in: what Activation links point to."""
+        return (self.url or f"https://{self.address}:{self.published_port}").rstrip("/")
 
 
 @dataclass(frozen=True)
@@ -262,11 +268,17 @@ def _local_sign_in(env: Mapping[str, str], problems: list[str]) -> LocalSignIn |
                 f"sign-in, e.g. https://dockyard.lan:8443, not {url!r}."
             )
 
+    # Set by compose.local.yaml; the port inside the container when nothing relays it.
+    published_port = env.get("DOCKYARD_LOCAL_HOST_PORT", "").strip() or port
+    if not _is_port(published_port):
+        problems.append(f"DOCKYARD_LOCAL_HOST_PORT must be a port number, not {published_port!r}.")
+
     return LocalSignIn(
         port=int(port) if _is_port(port) else 0,
         address=address,
         networks=tuple(networks),
         url=url,
+        published_port=int(published_port) if _is_port(published_port) else 0,
     )
 
 

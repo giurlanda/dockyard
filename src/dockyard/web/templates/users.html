@@ -11,7 +11,8 @@
         <input id="email" name="email" type="email" value="{{ email }}" maxlength="254"
                autocomplete="off" autocapitalize="off" spellcheck="false"
                aria-describedby="email-hint" required>
-        <p class="hint muted" id="email-hint">{{ t("users.invite.hint") }}</p>
+        <p class="hint muted" id="email-hint">
+          {{- t("users.invite.hint_local" if activation_links else "users.invite.hint") }}</p>
       </div>
       <div class="actions"><button class="primary">{{ t("users.invite.button") }}</button></div>
     </form>
@@ -23,10 +24,29 @@
         {% for invitation in invitations %}
           <li>
             <span>{{ invitation.email }}</span>
+            {% if activation_links %}
+              <form method="post" action="/invitations/{{ invitation.email|urlencode }}/activation-link">
+                <button aria-label="{{ t('users.activation_link.new_email', email=invitation.email) }}">
+                  {{ t("users.activation_link.new") }}</button>
+              </form>
+            {% endif %}
             <form method="post" action="/invitations/{{ invitation.email|urlencode }}/revoke">
               <button aria-label="{{ t('users.invitations.revoke_email', email=invitation.email) }}">
                 {{ t("users.invitations.revoke") }}</button>
             </form>
+            {% if made and made[0] == invitation.email %}
+              <div class="activation-link">
+                <label for="activation-link">{{ t("users.activation_link.label", email=invitation.email) }}</label>
+                <div class="code-row">
+                  <input id="activation-link" value="{{ made[1] }}" readonly spellcheck="false"
+                         aria-describedby="activation-link-hint">
+                  <button type="button" data-copy="activation-link">{{ t("users.activation_link.copy") }}</button>
+                </div>
+                <p class="hint muted" id="activation-link-hint">{{ t("users.activation_link.hint") }}</p>
+                <p class="hint outcome good" role="status" data-copied="activation-link" hidden>
+                  {{- t("users.activation_link.copied") }}</p>
+              </div>
+            {% endif %}
           </li>
         {% endfor %}
       </ul>
@@ -49,3 +69,4 @@
     <p><a href="/">{{ t("notice.home") }}</a></p>
   </section>
 {% endblock %}
+{% block scripts %}{% if made %}<script src="/static/copy.js"></script>{% endif %}{% endblock %}

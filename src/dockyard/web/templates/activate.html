@@ -1,0 +1,27 @@
+{% extends "base.html" %}
+{% block title %}{{ t("activate.title") }}{% endblock %}
+{% block header %}<div class="who">
+  {% include "_languages.html" %}
+  </div>{% endblock %}
+{% block content %}
+  <section class="panel sign-in" aria-labelledby="activate">
+    <h1 id="activate">{{ t("activate.title") }}</h1>
+    <p>{{ t("activate.explain", email=email) }}</p>
+    {% if problem %}<p class="warning" role="alert">{{ t("activate.refused." ~ problem) }}</p>{% endif %}
+    <form class="fields" method="post">
+      <input type="email" name="email" value="{{ email }}" autocomplete="username" hidden>
+      <div class="field">
+        <label for="password">{{ t("activate.password") }}</label>
+        <input id="password" name="password" type="password" autocomplete="new-password"
+               minlength="12" aria-describedby="rules" required autofocus>
+        <p class="hint muted" id="rules">{{ t("activate.rules") }}</p>
+      </div>
+      <div class="field">
+        <label for="repeated">{{ t("activate.repeated") }}</label>
+        <input id="repeated" name="repeated" type="password" autocomplete="new-password"
+               minlength="12" required>
+      </div>
+      <div class="actions"><button class="primary">{{ t("activate.submit") }}</button></div>
+    </form>
+  </section>
+{% endblock %}

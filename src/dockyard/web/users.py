@@ -21,10 +21,12 @@ from ..accounts import (
     Refusal,
     Role,
     User,
+    normalise_email,
 )
 from ..projects import Projects
 from ..runtime import Runtime
 from .guard import CurrentAdministrator
+from .local_sign_in import ActivationLinks
 from .pages import Pages
 
 # Refusals of what conflicts with how things are, rather than with what was asked.
@@ -38,10 +40,20 @@ class NewInvitation(BaseModel):
 class InvitationOut(BaseModel):
     email: str
     created_at: str
+    # Shown once, as it is made: only while Local sign-in is on, and only when just invited.
+    activation_link: str | None = None
 
     @classmethod
-    def of(cls, invitation: Invitation) -> InvitationOut:
-        return cls(email=invitation.email, created_at=invitation.created_at)
+    def of(cls, invitation: Invitation, activation_link: str | None = None) -> InvitationOut:
+        return cls(
+            email=invitation.email,
+            created_at=invitation.created_at,
+            activation_link=activation_link,
+        )
+
+
+class ActivationLinkOut(BaseModel):
+    activation_link: str
 
 
 class UserChange(BaseModel):
@@ -62,9 +74,16 @@ class UserOut(BaseModel):
 
 
 def users_routes(
-    accounts: Accounts, projects: Projects, runtime: Runtime, pages: Pages
+    accounts: Accounts,
+    projects: Projects,
+    runtime: Runtime,
+    pages: Pages,
+    activation_links: ActivationLinks | None,  # None: Local sign-in is off
 ) -> APIRouter:
     router = APIRouter()
+
+    def activation_link(email: str) -> str | None:
+        return activation_links.new(email) if activation_links else None
 
     def remove(email: str) -> bool:
         """Remove the User and everything they own. False if there is no such User.
@@ -104,6 +123,7 @@ def users_routes(
         *,
         email: str = "",
         problem: str | None = None,
+        made: tuple[str, str] | None = None,  # the email and the Activation link just made
         status_code: int = 200,
     ) -> HTMLResponse:
         return pages.render(
@@ -115,7 +135,13 @@ def users_routes(
             invitations=accounts.invitations(),
             email=email,
             problem=problem,
+            activation_links=activation_links is not None,
+            made=made,
         )
+
+    def made_page(request: Request, user: User, email: str, link: str) -> HTMLResponse:
+        """The Users page showing the Activation link just made, the only time it is shown."""
+        return users_page(request, user, made=(email, link), status_code=201)
 
     def user_page(
         request: Request,
@@ -184,9 +210,17 @@ def users_routes(
     @router.post("/api/invitations", status_code=201, response_model=InvitationOut)
     def invite(request: Request, _: CurrentAdministrator, new: NewInvitation) -> object:
         try:
-            return InvitationOut.of(accounts.invite(new.email))
+            invitation = accounts.invite(new.email)
         except InvitationRefused as refusal:
             return refused(request, refusal)
+        return InvitationOut.of(invitation, activation_link(invitation.email))
+
+    @router.post("/api/invitations/{email}/activation-link", status_code=201, response_model=None)
+    def new_activation_link(_: CurrentAdministrator, email: str) -> ActivationLinkOut:
+        link = activation_link(email)
+        if link is None:
+            raise HTTPException(404)
+        return ActivationLinkOut(activation_link=link)
 
     @router.delete("/api/invitations/{email}", status_code=204)
     def revoke(_: CurrentAdministrator, email: str) -> Response:
@@ -203,7 +237,7 @@ def users_routes(
         request: Request, user: CurrentAdministrator, email: Annotated[str, Form()] = ""
     ) -> Response:
         try:
-            accounts.invite(email)
+            invitation = accounts.invite(email)
         except InvitationRefused as refusal:
             return users_page(
                 request,
@@ -212,7 +246,19 @@ def users_routes(
                 problem=f"invitation_refused.{refusal.reason}.body",
                 status_code=_status_code(refusal),
             )
-        return RedirectResponse("/users", status_code=303)
+        link = activation_link(invitation.email)
+        if link is None:  # Local sign-in is off, or the Invitation is already used up
+            return RedirectResponse("/users", status_code=303)
+        return made_page(request, user, invitation.email, link)
+
+    @router.post("/invitations/{email}/activation-link", response_model=None)
+    def new_activation_link_from_page(
+        request: Request, user: CurrentAdministrator, email: str
+    ) -> Response:
+        link = activation_link(email)
+        if link is None:
+            raise HTTPException(404)
+        return made_page(request, user, normalise_email(email), link)
 
     @router.post("/invitations/{email}/revoke", response_model=None)
     def revoke_from_page(_: CurrentAdministrator, email: str) -> Response:

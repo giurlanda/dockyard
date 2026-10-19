@@ -145,6 +145,17 @@ MIGRATIONS = (
         retry_after    TEXT
     );
     """,
+    # Activation links, known by the hash of their token alone: one live link per email, for a
+    # pending Invitation or for a User who sets a new password. Each works once, until it
+    # expires, its Invitation goes, or a new one replaces it.
+    """
+    CREATE TABLE activation_links (
+        token_hash TEXT PRIMARY KEY,
+        email      TEXT NOT NULL UNIQUE,
+        kind       TEXT NOT NULL CHECK (kind IN ('invitation', 'reset')),
+        expires_at TEXT NOT NULL
+    );
+    """,
 )
 
 

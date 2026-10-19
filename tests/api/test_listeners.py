@@ -2,6 +2,7 @@
 
 import http.client
 import ipaddress
+import logging
 import os
 import signal
 import socket
@@ -71,8 +72,8 @@ def _accepts_connections(port: int) -> bool:
 
 
 @contextmanager
-def _serving(instance: Instance) -> Iterator[None]:
-    servers = Servers(instance.listeners.values(), log_level="warning")
+def _serving(instance: Instance, log_level: str = "warning") -> Iterator[None]:
+    servers = Servers(instance.listeners.values(), log_level=log_level)
     serving = threading.Thread(target=servers.run, daemon=True)
     serving.start()
     deadline = time.monotonic() + 10
@@ -211,3 +212,34 @@ def test_from_a_local_network_the_local_listener_answers_not_signed_in(
         status, _ = _https_get(port, "/api/me")
 
     assert status == 401
+
+
+def test_the_access_log_never_shows_an_activation_links_token(
+    start_instance: Callable[..., Instance],
+) -> None:
+    """Whoever reads the log could otherwise choose the person's password."""
+    port = _free_port()
+    instance = start_instance(
+        DOCKYARD_CF_ACCESS_TEAM=None,
+        DOCKYARD_CF_ACCESS_AUD=None,
+        DOCKYARD_LISTEN_HOST="127.0.0.1",
+        DOCKYARD_LOCAL_PORT=str(port),
+        DOCKYARD_LOCAL_ADDRESS="127.0.0.1",
+        DOCKYARD_LOCAL_NETWORKS="127.0.0.0/8",
+    )
+    logged: list[str] = []
+    access_log = logging.getLogger("uvicorn.access")
+    recorder = logging.Handler()
+    recorder.emit = lambda record: logged.append(record.getMessage())  # type: ignore[method-assign]
+
+    with _serving(instance, log_level="info"):
+        access_log.addHandler(recorder)  # once serving: starting configures the log afresh
+        try:
+            _https_get(port, "/activate/the-secret-token?lang=it")
+            _https_get(port, "/sign-in")
+        finally:
+            access_log.removeHandler(recorder)
+
+    assert any("/activate/" in line for line in logged), logged
+    assert any("/sign-in" in line for line in logged), logged
+    assert not any("the-secret-token" in line for line in logged), logged

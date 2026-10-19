@@ -89,6 +89,12 @@ def _announce_ways_in(settings: Settings, certificate: Certificate | None) -> No
             "DOCKYARD_LOCAL_ADDRESS is 0.0.0.0: Local sign-in is published on every interface "
             "of the host, which may reach beyond the LAN. Name the host's LAN or VPN address."
         )
+        if local.url is None:
+            log.warning(
+                "Activation links point to %s, which no browser can open: set "
+                "DOCKYARD_LOCAL_URL to the address people open Local sign-in at.",
+                local.base_url,
+            )
 
 
 _PASSWORD_RULES = {

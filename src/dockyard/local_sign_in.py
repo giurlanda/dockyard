@@ -1,4 +1,5 @@
-"""Local sign-in: Users' passwords, signing in with them, and the sessions that follow.
+"""Local sign-in: Users' passwords, signing in with them, and the sessions that follow; the
+Activation links with which invited people choose their password.
 
 Only the local listener uses it (ADR 0004). Neither passwords nor session tokens are stored: only
 what proves them.
@@ -11,12 +12,13 @@ import hashlib
 import hmac
 import logging
 import secrets
+import sqlite3
 import threading
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from enum import StrEnum
 
-from .accounts import normalise_email
+from .accounts import Role, normalise_email
 from .clock import Clock
 from .database import Database
 
@@ -30,6 +32,9 @@ FAILURES_BEFORE_DELAY = 5
 FIRST_DELAY = timedelta(seconds=30)
 LONGEST_DELAY = timedelta(minutes=15)
 FAILURES_FORGOTTEN_AFTER = timedelta(days=1)  # a day without one: counting starts again
+ACTIVATION_LINK_LIFETIME = timedelta(days=7)
+# The Activation link with this token hash that has not expired at this time.
+_LIVE_LINK = "token_hash = ? AND julianday(expires_at) > julianday(?)"
 
 log = logging.getLogger(__name__)
 
@@ -47,6 +52,11 @@ class PasswordRefused(Exception):
 
 class NotAUser(Exception):
     """Only a User has a password."""
+
+
+class ActivationLinkInvalid(Exception):
+    """The Activation link expired, was used, or was voided: by a new one, by revoking its
+    Invitation, or by the person arriving through the authentication proxy first."""
 
 
 class SignInRefused(Exception):
@@ -129,11 +139,7 @@ class LocalSignIn:
         Raises PasswordRefused, NotAUser.
         """
         email = normalise_email(email)
-        if len(password) < MIN_PASSWORD_LENGTH:
-            raise PasswordRefused(PasswordRule.TOO_SHORT)
-        if password.lower() == email:
-            raise PasswordRefused(PasswordRule.EQUALS_EMAIL)
-        hashed = _hash_password(password)
+        hashed = _hash_password(_allowed(password, email))
         with self._db.transaction() as conn:
             changed = conn.execute(
                 "UPDATE users SET password = ? WHERE email = ?", (hashed, email)
@@ -141,6 +147,57 @@ class LocalSignIn:
             if not changed:
                 raise NotAUser
             conn.execute("DELETE FROM sessions WHERE email = ?", (email,))
+
+    def new_activation_link(self, email: str) -> str | None:
+        """The token of a new Activation link for the person's pending Invitation, replacing the
+        link they had. None when there is no such Invitation."""
+        token = secrets.token_urlsafe(32)
+        expires_at = self._clock.now() + ACTIVATION_LINK_LIFETIME
+        with self._db.transaction() as conn:
+            made = conn.execute(
+                "INSERT INTO activation_links (token_hash, email, kind, expires_at)"
+                " SELECT ?, email, 'invitation', ? FROM invitations WHERE email = ?"
+                " ON CONFLICT (email) DO UPDATE SET token_hash = excluded.token_hash,"
+                " kind = excluded.kind, expires_at = excluded.expires_at",
+                (_token_hash(token), expires_at.isoformat(), normalise_email(email)),
+            ).rowcount
+        return token if made else None
+
+    def activation_link_email(self, token: str) -> str | None:
+        """The email the Activation link is for; None when it no longer works."""
+        with self._db.transaction() as conn:
+            row = conn.execute(
+                f"SELECT email FROM activation_links WHERE {_LIVE_LINK}",
+                (_token_hash(token), self._clock.now().isoformat()),
+            ).fetchone()
+        return row["email"] if row else None
+
+    def activate(self, token: str, password: str) -> str:
+        """Use up the Activation link and its Invitation: the person becomes a User with this
+        password. A new session's token.
+
+        Raises ActivationLinkInvalid, PasswordRefused.
+        """
+        email = self.activation_link_email(token)
+        if email is None:
+            raise ActivationLinkInvalid
+        hashed = _hash_password(_allowed(password, email))
+        now = self._clock.now()
+        with self._db.transaction() as conn:
+            # Whichever comes first, this or the person arriving through the authentication proxy,
+            # uses up the Invitation; a link opened twice at once works once.
+            used = conn.execute(
+                f"DELETE FROM activation_links WHERE {_LIVE_LINK}",
+                (_token_hash(token), now.isoformat()),
+            ).rowcount
+            invited = conn.execute("DELETE FROM invitations WHERE email = ?", (email,)).rowcount
+            if not (used and invited):
+                raise ActivationLinkInvalid
+            conn.execute(
+                "INSERT INTO users (email, role, password) VALUES (?, ?, ?)",
+                (email, Role.USER, hashed),
+            )
+            return _new_session(conn, email, now)
 
     def sign_in(self, email: str, password: str, client: str) -> str:
         """A new session's token. Whatever is wrong (the email, the password, or the person is
@@ -172,14 +229,8 @@ class LocalSignIn:
             return None
         if stored is None:
             return None
-        token = secrets.token_urlsafe(32)
         with self._db.transaction() as conn:
-            conn.execute(
-                "INSERT INTO sessions (token_hash, email, created_at, last_used_at)"
-                " VALUES (?, ?, ?, ?)",
-                (_token_hash(token), email, now.isoformat(), now.isoformat()),
-            )
-        return token
+            return _new_session(conn, email, now)
 
     def _retry_in(self, keys: tuple[str, str], now: datetime) -> timedelta | None:
         with self._db.transaction() as conn:
@@ -244,6 +295,24 @@ class LocalSignIn:
     def sign_out(self, token: str) -> None:
         with self._db.transaction() as conn:
             conn.execute("DELETE FROM sessions WHERE token_hash = ?", (_token_hash(token),))
+
+
+def _allowed(password: str, email: str) -> str:
+    """Raises PasswordRefused."""
+    if len(password) < MIN_PASSWORD_LENGTH:
+        raise PasswordRefused(PasswordRule.TOO_SHORT)
+    if password.lower() == email:
+        raise PasswordRefused(PasswordRule.EQUALS_EMAIL)
+    return password
+
+
+def _new_session(conn: sqlite3.Connection, email: str, now: datetime) -> str:
+    token = secrets.token_urlsafe(32)
+    conn.execute(
+        "INSERT INTO sessions (token_hash, email, created_at, last_used_at) VALUES (?, ?, ?, ?)",
+        (_token_hash(token), email, now.isoformat(), now.isoformat()),
+    )
+    return token
 
 
 def _longest(waits: list[timedelta]) -> timedelta | None:
