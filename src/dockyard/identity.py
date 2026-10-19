@@ -8,11 +8,14 @@ from typing import Protocol
 import jwt
 from starlette.requests import HTTPConnection
 
+from .local_sign_in import LocalSignIn
 from .settings import CloudflareAccess, DevelopmentHeader, IdentitySource
 
 log = logging.getLogger(__name__)
 
 DEVELOPMENT_HEADER = "X-Dockyard-Dev-Email"
+# __Host-: the browser keeps it only from a secure page, for this host and every path of it.
+SESSION_COOKIE = "__Host-dockyard_session"
 
 
 class IdentityUnavailable(Exception):
@@ -71,13 +74,14 @@ class DevelopmentHeaderIdentity:
 
 class LocalSignInIdentity:
     """Whoever signed in with Local sign-in. Never a Cloudflare Access token: the local listener
-    ignores them.
+    ignores them."""
 
-    Nobody can sign in yet, so nobody is signed in.
-    """
+    def __init__(self, local_sign_in: LocalSignIn) -> None:
+        self._local_sign_in = local_sign_in
 
     def verified_email(self, conn: HTTPConnection) -> str | None:
-        return None
+        token = conn.cookies.get(SESSION_COOKIE)
+        return self._local_sign_in.signed_in_email(token) if token else None
 
 
 def identity_for(source: IdentitySource, signing_keys: SigningKeys | None = None) -> Identity:

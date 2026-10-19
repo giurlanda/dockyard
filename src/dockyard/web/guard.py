@@ -10,12 +10,12 @@ from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from enum import StrEnum
 from typing import Annotated
-from urllib.parse import urlsplit
+from urllib.parse import quote, urlsplit
 
 import anyio
 from fastapi import Depends
 from starlette.requests import HTTPConnection
-from starlette.responses import Response
+from starlette.responses import RedirectResponse, Response
 from starlette.types import ASGIApp, Receive, Scope, Send
 
 from ..accounts import Accounts, Role, User
@@ -89,6 +89,27 @@ class ClientNetworks:
         )
 
 
+@dataclass(frozen=True)
+class SignInPage:
+    """Where a listener sends people who are not signed in, and what they reach without that."""
+
+    path: str
+    public: tuple[str, ...]  # paths, and prefixes of paths ending in /
+
+    def is_public(self, path: str) -> bool:
+        return any(
+            path.startswith(public) if public.endswith("/") else path == public
+            for public in self.public
+        )
+
+    def redirect(self, conn: HTTPConnection) -> Response:
+        """To sign in, then back to the page asked for (only a GET can be asked for again)."""
+        if conn.scope["method"] != "GET" or conn.url.path == "/":
+            return RedirectResponse(self.path, status_code=303)
+        target = conn.url.path + (f"?{conn.url.query}" if conn.url.query else "")
+        return RedirectResponse(f"{self.path}?next={quote(target, safe='')}", status_code=303)
+
+
 class IdentityGuard:
     def __init__(
         self,
@@ -98,12 +119,14 @@ class IdentityGuard:
         accounts: Accounts,
         refuse: Refuse,
         clients: ClientNetworks | None = None,
+        sign_in: SignInPage | None = None,
     ) -> None:
         self._app = app
         self._identity = identity
         self._accounts = accounts
         self._refuse = refuse
         self._clients = clients  # None: clients from anywhere
+        self._sign_in = sign_in  # None: people sign in elsewhere (at the authentication proxy)
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
         if scope["type"] not in ("http", "websocket"):
@@ -116,6 +139,10 @@ class IdentityGuard:
             scope.setdefault("state", {})["user"] = admitted
             await self._app(scope, receive, send)
             return
+        sign_in = self._sign_in if admitted.reason == Refusal.UNAUTHENTICATED else None
+        if sign_in is not None and scope["type"] == "http" and sign_in.is_public(conn.url.path):
+            await self._app(scope, receive, send)  # with no User
+            return
 
         if scope["type"] == "websocket":
             # Accept, then close with the reason: a socket refused during the handshake reaches
@@ -123,6 +150,9 @@ class IdentityGuard:
             await receive()  # websocket.connect
             await send({"type": "websocket.accept"})
             await send({"type": "websocket.close", "code": admitted.reason.websocket_close_code})
+            return
+        if sign_in is not None and not is_api(conn):
+            await sign_in.redirect(conn)(scope, receive, send)
             return
         await self._refuse(conn, admitted)(scope, receive, send)
 
@@ -148,6 +178,16 @@ def _from_another_site(conn: HTTPConnection) -> bool:
     if origin is None:
         return False  # not sent by a browser
     return urlsplit(origin).netloc != conn.headers.get("host")
+
+
+def is_api(conn: HTTPConnection) -> bool:
+    return conn.url.path.startswith("/api/")
+
+
+def signed_in_user(conn: HTTPConnection) -> User | None:
+    """On a page anyone reaches: the User, when they are signed in."""
+    user = getattr(conn.state, "user", None)
+    return user if isinstance(user, User) else None
 
 
 def current_user(conn: HTTPConnection) -> User:

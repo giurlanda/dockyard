@@ -1,0 +1,7 @@
+    <form class="languages" method="post" action="/language" aria-label="{{ t('language.label') }}">
+      <input type="hidden" name="next" value="{{ path }}">
+      {% for code, name in languages.items() %}
+        <button name="lang" value="{{ code }}" lang="{{ code }}"
+                aria-pressed="{{ 'true' if code == lang else 'false' }}">{{ name }}</button>
+      {% endfor %}
+    </form>

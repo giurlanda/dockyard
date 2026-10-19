@@ -29,6 +29,7 @@ from ..database import Database
 from ..git_credentials import GitCredentials
 from ..identity import Identity, LocalSignInIdentity, SigningKeys, identity_for
 from ..images import Images
+from ..local_sign_in import LocalSignIn
 from ..projects import Projects
 from ..runtime import Runtime, RuntimeUnavailable
 from ..settings import Settings
@@ -36,10 +37,18 @@ from ..tls import Certificate, local_certificate
 from .all_projects import all_projects_routes
 from .claude_account import claude_account_routes, claude_account_status
 from .git_credentials import git_credentials_routes
-from .guard import ClientNetworks, CurrentUser, IdentityGuard, NotAdministrator
+from .guard import (
+    ClientNetworks,
+    CurrentUser,
+    IdentityGuard,
+    NotAdministrator,
+    SignInPage,
+    is_api,
+)
 from .i18n import LANGUAGE_COOKIE, Language
 from .images import images_routes
-from .pages import Pages, is_api
+from .local_sign_in import SIGN_IN, SIGN_OUT, local_sign_in_routes
+from .pages import Pages, same_site_path
 from .projects import projects_routes
 from .users import users_routes
 
@@ -70,6 +79,7 @@ class Instance:
     """The domain objects, built once, and the listeners that share them."""
 
     clock: Clock
+    local_sign_in: LocalSignIn
     listeners: Mapping[ListenerName, Listener]
 
 
@@ -90,9 +100,11 @@ def create_instance(
     certificate: Certificate | None = None,
 ) -> Instance:
     """certificate: the local listener's, when already read; else read from the data volume."""
+    clock = clock or SystemClock()
     database = Database(settings.data_dir / "dockyard.db")
     database.migrate()
     accounts = Accounts(database)
+    local_sign_in = LocalSignIn(database, clock)
     accounts.bootstrap_first_administrator(settings.first_administrator_email)
     git_credentials = GitCredentials(database, settings.secret_key)
     projects = Projects(database, runtime, git_credentials, limits=settings.limits)
@@ -103,7 +115,6 @@ def create_instance(
         log.warning("Cannot pick up the clones and Projects in progress: %s", error)
     images.resume()
     upkeep = _Upkeep(projects, images)
-    pages = Pages()
 
     listeners: dict[ListenerName, Listener] = {}
     if settings.identity is not None:
@@ -115,23 +126,22 @@ def create_instance(
             projects,
             images,
             upkeep,
-            pages,
         )
         listeners[ListenerName.TUNNEL] = Listener(
             tunnel, settings.listen_host, settings.listen_port
         )
     if settings.local is not None:
         local = _listener_app(
-            LocalSignInIdentity(),
+            LocalSignInIdentity(local_sign_in),
             runtime,
             accounts,
             git_credentials,
             projects,
             images,
             upkeep,
-            pages,
             # Docker's networks as they are at start: Docker gives a new one a range of its own.
             clients=ClientNetworks(admitted=settings.local.networks, refused=runtime.networks()),
+            local_sign_in=local_sign_in,
         )
         listeners[ListenerName.LOCAL] = Listener(
             local,
@@ -139,7 +149,7 @@ def create_instance(
             settings.local.port,
             certificate or local_certificate(settings.data_dir, settings.local),
         )
-    return Instance(clock=clock or SystemClock(), listeners=listeners)
+    return Instance(clock=clock, local_sign_in=local_sign_in, listeners=listeners)
 
 
 class _Upkeep:
@@ -176,10 +186,11 @@ def _listener_app(
     projects: Projects,
     images: Images,
     upkeep: _Upkeep,
-    pages: Pages,
     *,
     clients: ClientNetworks | None = None,
+    local_sign_in: LocalSignIn | None = None,  # people sign in on this listener with it
 ) -> FastAPI:
+    pages = Pages(local_sign_in=local_sign_in is not None)
     app = FastAPI(
         title="Dockyard",
         docs_url=None,
@@ -193,6 +204,9 @@ def _listener_app(
         accounts=accounts,
         refuse=pages.refusal,
         clients=clients,
+        sign_in=SignInPage(SIGN_IN, public=(SIGN_IN, SIGN_OUT, "/language", "/static/"))
+        if local_sign_in
+        else None,
     )
 
     @app.exception_handler(RuntimeUnavailable)
@@ -234,7 +248,7 @@ def _listener_app(
     def switch_language(
         lang: Annotated[Language, Form()], next: Annotated[str, Form()] = "/"
     ) -> RedirectResponse:
-        response = RedirectResponse(_local_path(next), status_code=303)
+        response = RedirectResponse(same_site_path(next), status_code=303)
         response.set_cookie(LANGUAGE_COOKIE, lang, max_age=ONE_YEAR, httponly=True, samesite="lax")
         return response
 
@@ -248,12 +262,7 @@ def _listener_app(
     app.include_router(users_routes(accounts, projects, runtime, pages))
     app.include_router(all_projects_routes(projects, pages))
     app.include_router(images_routes(images, pages))
+    if local_sign_in:
+        app.include_router(local_sign_in_routes(local_sign_in, pages))
     app.mount("/static", StaticFiles(packages=[("dockyard.web", "static")]), name="static")
     return app
-
-
-def _local_path(target: str) -> str:
-    """Only paths on this site: never an open redirect."""
-    if target.startswith("/") and not target.startswith(("//", "/\\")):
-        return target
-    return "/"

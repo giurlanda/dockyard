@@ -309,5 +309,14 @@
   "image.rebuild.explain": "Build it again from its instructions, on top of the Base Image as it is now. Projects keep starting from the build they have until the new one is ready.",
   "image.rebuild.button": "Build again",
   "administration.failed_images": "These Images failed to build: Users cannot pick them. Open each one to see why.",
-  "administration.failed_images_list": "Images that failed to build"
+  "administration.failed_images_list": "Images that failed to build",
+  "local_sign_in.title": "Sign in",
+  "local_sign_in.explain": "Local sign-in: use the email and the password you have on this Dockyard.",
+  "local_sign_in.email": "Email",
+  "local_sign_in.password": "Password",
+  "local_sign_in.submit": "Sign in",
+  "local_sign_in.refused": "The email or the password is wrong.",
+  "local_sign_in.sign_out": "Sign out",
+  "local_sign_in.required.title": "Sign-in required",
+  "local_sign_in.required.body": "Sign in to Dockyard first."
 }

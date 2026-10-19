@@ -309,5 +309,14 @@
   "image.rebuild.explain": "Costruiscila di nuovo dalle sue istruzioni, sopra l'Immagine base attuale. I Progetti continuano a partire dalla costruzione che hanno finché la nuova non è pronta.",
   "image.rebuild.button": "Costruisci di nuovo",
   "administration.failed_images": "Non è stato possibile costruire queste Immagini: gli Utenti non possono sceglierle. Apri ciascuna per vedere perché.",
-  "administration.failed_images_list": "Immagini la cui costruzione è fallita"
+  "administration.failed_images_list": "Immagini la cui costruzione è fallita",
+  "local_sign_in.title": "Accedi",
+  "local_sign_in.explain": "Accesso locale: usa l'email e la password che hai su questo Dockyard.",
+  "local_sign_in.email": "Email",
+  "local_sign_in.password": "Password",
+  "local_sign_in.submit": "Accedi",
+  "local_sign_in.refused": "L'email o la password non sono corrette.",
+  "local_sign_in.sign_out": "Esci",
+  "local_sign_in.required.title": "Accesso richiesto",
+  "local_sign_in.required.body": "Prima accedi a Dockyard."
 }

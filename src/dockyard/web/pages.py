@@ -6,12 +6,13 @@ from jinja2 import Environment, PackageLoader, StrictUndefined, select_autoescap
 from starlette.requests import HTTPConnection
 from starlette.responses import HTMLResponse, JSONResponse, Response
 
-from .guard import Refusal, Refused
+from .guard import Refusal, Refused, is_api
 from .i18n import LANGUAGE_NAMES, language_for, translator
 
 
 class Pages:
-    def __init__(self) -> None:
+    def __init__(self, *, local_sign_in: bool = False) -> None:
+        self._local_sign_in = local_sign_in  # the pages of the local listener
         self._env = Environment(
             loader=PackageLoader("dockyard.web", "templates"),
             autoescape=select_autoescape(),
@@ -27,6 +28,7 @@ class Pages:
             t=translator(language),
             languages=LANGUAGE_NAMES,
             path=conn.url.path,
+            local_sign_in=self._local_sign_in,
             **context,
         )
         return HTMLResponse(html, status_code=status_code)
@@ -60,14 +62,20 @@ class Pages:
         if refused.reason == Refusal.OUTSIDE_LOCAL_NETWORKS and not is_api(conn):
             # A page that names nothing of the Instance, not even what it is.
             return self.render(conn, "unreachable.html", status_code=refused.reason.status_code)
+        key = f"refused.{refused.reason}"
+        if refused.reason == Refusal.UNAUTHENTICATED and self._local_sign_in:
+            key = "local_sign_in.required"  # here, not at an authentication proxy
         return self.problem(
             conn,
             refused.reason,
-            key=f"refused.{refused.reason}",
+            key=key,
             status_code=refused.reason.status_code,
             email=refused.email,
         )
 
 
-def is_api(conn: HTTPConnection) -> bool:
-    return conn.url.path.startswith("/api/")
+def same_site_path(target: str) -> str:
+    """Only paths on this site: never an open redirect."""
+    if target.startswith("/") and not target.startswith(("//", "/\\")):
+        return target
+    return "/"

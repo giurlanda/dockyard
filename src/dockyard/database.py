@@ -122,6 +122,18 @@ MIGRATIONS = (
     UPDATE images SET build = id WHERE status = 'ready';
     CREATE TABLE retired_builds (build TEXT PRIMARY KEY);
     """,
+    # Local sign-in. password: the scrypt hash of the User's password, NULL until they set one.
+    # A session is known by the hash of its token alone, and ends with its User.
+    """
+    ALTER TABLE users ADD COLUMN password TEXT;
+    CREATE TABLE sessions (
+        token_hash   TEXT PRIMARY KEY,
+        email        TEXT NOT NULL REFERENCES users (email) ON DELETE CASCADE,
+        created_at   TEXT NOT NULL,
+        last_used_at TEXT NOT NULL
+    );
+    CREATE INDEX sessions_email ON sessions (email);
+    """,
 )
 
 

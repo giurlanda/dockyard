@@ -1,11 +1,8 @@
   <div class="who">
     <span data-testid="user-email">{{ user.email }}</span>
     <span class="badge" data-testid="user-role">{{ t("role." ~ user.role) }}</span>
-    <form class="languages" method="post" action="/language" aria-label="{{ t('language.label') }}">
-      <input type="hidden" name="next" value="{{ path }}">
-      {% for code, name in languages.items() %}
-        <button name="lang" value="{{ code }}" lang="{{ code }}"
-                aria-pressed="{{ 'true' if code == lang else 'false' }}">{{ name }}</button>
-      {% endfor %}
-    </form>
+    {% include "_languages.html" %}
+    {% if local_sign_in %}
+      <form method="post" action="/sign-out"><button>{{ t("local_sign_in.sign_out") }}</button></form>
+    {% endif %}
   </div>

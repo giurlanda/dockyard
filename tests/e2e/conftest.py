@@ -28,7 +28,7 @@ PHONE = {"width": 375, "height": 740}
 PUBLIC_REPOSITORY = "https://github.com/octocat/Hello-World"
 
 
-def _free_port() -> int:
+def free_port() -> int:
     with socket.socket() as probe:
         probe.bind(("127.0.0.1", 0))
         port: int = probe.getsockname()[1]
@@ -53,7 +53,7 @@ def dockyard_url(tmp_path: Path, runtime: FakeRuntime) -> Iterator[str]:
             "DOCKYARD_DATA_DIR": str(data_dir),
         }
     )
-    port = _free_port()
+    port = free_port()
     server = uvicorn.Server(
         uvicorn.Config(
             create_app(settings, runtime), host="127.0.0.1", port=port, log_level="warning"

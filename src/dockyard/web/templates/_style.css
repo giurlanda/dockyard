@@ -132,3 +132,4 @@ button.danger { border-color: var(--bad); color: var(--bad); }
 .owned p { margin: 4px 0; }
 .owned .stats { margin-top: 8px; }
 .owned .actions form { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 16px; }
+.sign-in { max-width: 420px; margin: 8vh auto 0; }

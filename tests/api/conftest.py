@@ -153,8 +153,11 @@ def start_instance(
 def listener_client(
     instance: Instance, listener: ListenerName, *, address: str = CLOUDFLARED
 ) -> TestClient:
-    """A client of one of the Instance's listeners, reaching it from `address`."""
-    return TestClient(instance.listeners[listener].app, client=(address, 50000))
+    """A client of one of the Instance's listeners, reaching it from `address`, over HTTPS when
+    the listener is served so."""
+    served = instance.listeners[listener]
+    scheme = "https" if served.certificate else "http"
+    return TestClient(served.app, base_url=f"{scheme}://testserver", client=(address, 50000))
 
 
 @pytest.fixture

@@ -1,6 +1,6 @@
 """The local listener: Local sign-in's own way in, only from the Local networks (ADR 0004).
 
-Nobody can sign in on it yet: every request that gets past the address check is not signed in.
+Requests from here on are not signed in: Local sign-in itself is in test_local_sign_in.
 """
 
 from collections.abc import Callable
@@ -55,11 +55,14 @@ def test_without_cloudflare_there_is_only_the_local_listener(
 
 
 @pytest.mark.parametrize("address", [ON_THE_LAN, ON_THE_VPN])
-@pytest.mark.parametrize("path", ["/", "/api/me", "/no/such/page"])
-def test_from_the_local_networks_nobody_is_signed_in_yet(
-    start_local: Callable[..., TestClient], address: str, path: str
+def test_from_the_local_networks_whoever_is_not_signed_in_is_asked_to(
+    start_local: Callable[..., TestClient], address: str
 ) -> None:
-    assert start_local(address).get(path).status_code == 401
+    local = start_local(address)
+
+    assert local.get("/api/me").status_code == 401
+    for page in ("/", "/no/such/page"):
+        assert local.get(page, follow_redirects=False).headers["location"].startswith("/sign-in")
 
 
 @pytest.mark.parametrize("path", ["/", "/no/such/page", "/static/terminal.js"])

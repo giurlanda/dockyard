@@ -1,0 +1,26 @@
+{% extends "base.html" %}
+{% block title %}{{ t("local_sign_in.title") }}{% endblock %}
+{% block header %}<div class="who">
+  {% include "_languages.html" %}
+  </div>{% endblock %}
+{% block content %}
+  <section class="panel sign-in" aria-labelledby="sign-in">
+    <h1 id="sign-in">{{ t("local_sign_in.title") }}</h1>
+    <p class="muted">{{ t("local_sign_in.explain") }}</p>
+    {% if refused %}<p class="warning" role="alert">{{ t("local_sign_in.refused") }}</p>{% endif %}
+    <form class="fields" method="post" action="/sign-in">
+      <input type="hidden" name="next" value="{{ next }}">
+      <div class="field">
+        <label for="email">{{ t("local_sign_in.email") }}</label>
+        <input id="email" name="email" type="email" value="{{ email }}" autocomplete="username"
+               autocapitalize="off" spellcheck="false" required {% if not email %}autofocus{% endif %}>
+      </div>
+      <div class="field">
+        <label for="password">{{ t("local_sign_in.password") }}</label>
+        <input id="password" name="password" type="password" autocomplete="current-password"
+               required {% if email %}autofocus{% endif %}>
+      </div>
+      <div class="actions"><button class="primary">{{ t("local_sign_in.submit") }}</button></div>
+    </form>
+  </section>
+{% endblock %}
