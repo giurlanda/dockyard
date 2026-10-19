@@ -5,6 +5,7 @@ from __future__ import annotations
 import time
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -16,12 +17,14 @@ from fastapi.testclient import TestClient
 
 from dockyard.runtime.fake import FakeRuntime
 from dockyard.settings import Settings
-from dockyard.web import create_app
+from dockyard.web import Instance, ListenerName, create_instance
 
 ADMINISTRATOR = "first.administrator@example.com"
 TEAM = "acme"
 AUDIENCE = "dockyard-test-audience"
 ISSUER = f"https://{TEAM}.cloudflareaccess.com"
+# Where cloudflared reaches Dockyard from: a private address on the Docker network.
+CLOUDFLARED = "172.18.0.3"
 
 
 def new_signing_key() -> rsa.RSAPrivateKey:
@@ -105,25 +108,61 @@ def runtime() -> FakeRuntime:
     return FakeRuntime()
 
 
-@pytest.fixture
-def start_dockyard(
-    tmp_path: Path, proxy: AccessProxy, runtime: FakeRuntime
-) -> Callable[..., TestClient]:
-    """Start Dockyard with the standard test Instance configuration, plus overrides.
+class FakeClock:
+    """The time the Instance sees, moved on by the test instead of by waiting."""
 
-    An override of None removes that setting. Every start shares the same data, Runtime and
-    secret key: it is the same Instance.
+    def __init__(self) -> None:
+        self._now = datetime(2026, 1, 5, 9, 0, tzinfo=UTC)
+
+    def now(self) -> datetime:
+        return self._now
+
+    def advance(self, **delta: float) -> None:
+        self._now += timedelta(**delta)
+
+
+@pytest.fixture
+def clock() -> FakeClock:
+    return FakeClock()
+
+
+@pytest.fixture
+def start_instance(
+    tmp_path: Path, proxy: AccessProxy, runtime: FakeRuntime, clock: FakeClock
+) -> Callable[..., Instance]:
+    """Build the whole Instance, every listener of it, with the standard test Instance
+    configuration plus overrides.
+
+    An override of None removes that setting. Every start shares the same data, Runtime, clock
+    and secret key: it is the same Instance.
     """
     secret_key = Fernet.generate_key().decode()
 
-    def start(**overrides: str | None) -> TestClient:
+    def start(**overrides: str | None) -> Instance:
         env = instance_env(tmp_path, secret_key)
         for name, value in overrides.items():
             if value is None:
                 env.pop(name, None)
             else:
                 env[name] = value
-        return TestClient(create_app(Settings.from_env(env), runtime, signing_keys=proxy))
+        return create_instance(Settings.from_env(env), runtime, signing_keys=proxy, clock=clock)
+
+    return start
+
+
+def listener_client(
+    instance: Instance, listener: ListenerName, *, address: str = CLOUDFLARED
+) -> TestClient:
+    """A client of one of the Instance's listeners, reaching it from `address`."""
+    return TestClient(instance.listeners[listener].app, client=(address, 50000))
+
+
+@pytest.fixture
+def start_dockyard(start_instance: Callable[..., Instance]) -> Callable[..., TestClient]:
+    """Start Dockyard as reached through the tunnel (see start_instance for the overrides)."""
+
+    def start(**overrides: str | None) -> TestClient:
+        return listener_client(start_instance(**overrides), ListenerName.TUNNEL)
 
     return start
 

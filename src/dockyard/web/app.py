@@ -1,10 +1,17 @@
-"""The Dockyard web application: pages and API, all behind the identity guard."""
+"""The Dockyard web application: pages and API, all behind the identity guard.
+
+One Instance shares its database and domain objects among its listeners, one ASGI app for each
+way in, each app with its own identity guard.
+"""
 
 from __future__ import annotations
 
 import logging
-from collections.abc import AsyncIterator
+import threading
+from collections.abc import AsyncIterator, Mapping
 from contextlib import asynccontextmanager
+from dataclasses import dataclass
+from enum import StrEnum
 from typing import Annotated
 
 from fastapi import FastAPI, Form, Request
@@ -17,9 +24,10 @@ from starlette.exceptions import HTTPException
 from starlette.responses import Response
 
 from ..accounts import Accounts, Role
+from ..clock import Clock, SystemClock
 from ..database import Database
 from ..git_credentials import GitCredentials
-from ..identity import SigningKeys, identity_for
+from ..identity import Identity, SigningKeys, identity_for
 from ..images import Images
 from ..projects import Projects
 from ..runtime import Runtime, RuntimeUnavailable
@@ -39,9 +47,44 @@ ONE_YEAR = 365 * 24 * 3600
 log = logging.getLogger(__name__)
 
 
+class ListenerName(StrEnum):
+    """The ways into an Instance, each served on a listener of its own (ADR 0004)."""
+
+    TUNNEL = "tunnel"  # reached by cloudflared, identity from Cloudflare Access
+
+
+@dataclass(frozen=True)
+class Listener:
+    """One way into the Instance: its app and the address it is served on."""
+
+    app: FastAPI
+    host: str
+    port: int
+
+
+@dataclass(frozen=True)
+class Instance:
+    """The domain objects, built once, and the listeners that share them."""
+
+    clock: Clock
+    listeners: Mapping[ListenerName, Listener]
+
+
 def create_app(
     settings: Settings, runtime: Runtime, *, signing_keys: SigningKeys | None = None
 ) -> FastAPI:
+    """The tunnel listener's app, for whoever serves only that one."""
+    instance = create_instance(settings, runtime, signing_keys=signing_keys)
+    return instance.listeners[ListenerName.TUNNEL].app
+
+
+def create_instance(
+    settings: Settings,
+    runtime: Runtime,
+    *,
+    signing_keys: SigningKeys | None = None,
+    clock: Clock | None = None,
+) -> Instance:
     database = Database(settings.data_dir / "dockyard.db")
     database.migrate()
     accounts = Accounts(database)
@@ -54,22 +97,73 @@ def create_app(
     except RuntimeUnavailable as error:
         log.warning("Cannot pick up the clones and Projects in progress: %s", error)
     images.resume()
+    upkeep = _Upkeep(projects, images)
     pages = Pages()
 
-    @asynccontextmanager
-    async def lifespan(app: FastAPI) -> AsyncIterator[None]:
-        projects.keep_git_credentials()
-        images.keep_current()
-        yield
-        projects.close()
-        images.close()
+    tunnel = _listener_app(
+        identity_for(settings.identity, signing_keys),
+        runtime,
+        accounts,
+        git_credentials,
+        projects,
+        images,
+        upkeep,
+        pages,
+    )
+    return Instance(
+        clock=clock or SystemClock(),
+        listeners={
+            ListenerName.TUNNEL: Listener(tunnel, settings.listen_host, settings.listen_port)
+        },
+    )
 
+
+class _Upkeep:
+    """The Instance's background upkeep runs once, while any of its listeners is served."""
+
+    def __init__(self, projects: Projects, images: Images) -> None:
+        self._projects = projects
+        self._images = images
+        self._lock = threading.Lock()
+        self._serving = 0
+
+    @asynccontextmanager
+    async def lifespan(self, app: FastAPI) -> AsyncIterator[None]:
+        with self._lock:
+            self._serving += 1
+            if self._serving == 1:
+                self._projects.keep_git_credentials()
+                self._images.keep_current()
+        try:
+            yield
+        finally:
+            with self._lock:
+                self._serving -= 1
+                if self._serving == 0:
+                    self._projects.close()
+                    self._images.close()
+
+
+def _listener_app(
+    identity: Identity,
+    runtime: Runtime,
+    accounts: Accounts,
+    git_credentials: GitCredentials,
+    projects: Projects,
+    images: Images,
+    upkeep: _Upkeep,
+    pages: Pages,
+) -> FastAPI:
     app = FastAPI(
-        title="Dockyard", docs_url=None, redoc_url=None, openapi_url=None, lifespan=lifespan
+        title="Dockyard",
+        docs_url=None,
+        redoc_url=None,
+        openapi_url=None,
+        lifespan=upkeep.lifespan,
     )
     app.add_middleware(
         IdentityGuard,
-        identity=identity_for(settings.identity, signing_keys),
+        identity=identity,
         accounts=accounts,
         refuse=pages.refusal,
     )

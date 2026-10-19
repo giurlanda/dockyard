@@ -6,12 +6,11 @@ import logging
 import os
 import sys
 
-import uvicorn
-
 from .runtime import RuntimeUnavailable
 from .runtime.docker import DockerRuntime
+from .serving import Servers
 from .settings import ConfigError, Settings
-from .web import create_app
+from .web import create_instance
 
 
 def main() -> int:
@@ -28,7 +27,7 @@ def main() -> int:
     except RuntimeUnavailable as error:
         print(error, file=sys.stderr)
         return 1
-    uvicorn.run(create_app(settings, runtime), host=settings.listen_host, port=settings.listen_port)
+    Servers(create_instance(settings, runtime).listeners.values()).run()
     return 0
 
 
