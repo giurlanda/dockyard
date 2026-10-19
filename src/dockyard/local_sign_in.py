@@ -9,7 +9,9 @@ from __future__ import annotations
 import base64
 import hashlib
 import hmac
+import logging
 import secrets
+import threading
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from enum import StrEnum
@@ -22,6 +24,14 @@ MIN_PASSWORD_LENGTH = 12
 SESSION_IDLE = timedelta(days=7)  # a session not used for this long is over
 SESSION_LIFETIME = timedelta(days=30)  # and none lasts longer, however much it is used
 SESSION_USE_RECORDED_EVERY = timedelta(minutes=1)  # not a write for every request
+# Failed sign-ins, per email and per client address: after this many in a row, each further
+# attempt waits a delay that doubles from the first up to the longest. Nothing locks for good.
+FAILURES_BEFORE_DELAY = 5
+FIRST_DELAY = timedelta(seconds=30)
+LONGEST_DELAY = timedelta(minutes=15)
+FAILURES_FORGOTTEN_AFTER = timedelta(days=1)  # a day without one: counting starts again
+
+log = logging.getLogger(__name__)
 
 
 class PasswordRule(StrEnum):
@@ -37,6 +47,19 @@ class PasswordRefused(Exception):
 
 class NotAUser(Exception):
     """Only a User has a password."""
+
+
+class SignInRefused(Exception):
+    """The email or the password is wrong, told apart by nothing. retry_in: how long until the
+    next attempt is checked, once failures slow them down."""
+
+    def __init__(self, retry_in: timedelta | None) -> None:
+        self.retry_in = retry_in
+        super().__init__(retry_in)
+
+
+class SlowedDown(SignInRefused):
+    """Too many failures: refused without checking the password."""
 
 
 @dataclass(frozen=True)
@@ -96,6 +119,9 @@ class LocalSignIn:
         # Checked when there is no password to check, so that takes as long as a wrong one. Made
         # now: made at the first unknown email, it would make that refusal slower.
         self._nobodys_password = _hash_password(secrets.token_urlsafe(16))
+        # One attempt at a time: otherwise attempts sent together would all be checked before
+        # any of their failures counted. Each slow check is one a failure is counted for.
+        self._attempts = threading.Lock()
 
     def set_password(self, email: str, password: str) -> None:
         """Give the User a new password, signing them out everywhere.
@@ -116,10 +142,29 @@ class LocalSignIn:
                 raise NotAUser
             conn.execute("DELETE FROM sessions WHERE email = ?", (email,))
 
-    def sign_in(self, email: str, password: str) -> str | None:
-        """A new session's token, or None. Whatever is wrong (the email, the password, or the
-        person is not a User) is told apart neither by the answer nor by the time it takes."""
+    def sign_in(self, email: str, password: str, client: str) -> str:
+        """A new session's token. Whatever is wrong (the email, the password, or the person is
+        not a User) is told apart neither by the refusal nor by the time it takes.
+
+        Raises SignInRefused, SlowedDown.
+        """
         email = normalise_email(email)
+        email_key, client_key = f"email:{email}", f"client:{client}"
+        with self._attempts:
+            now = self._clock.now()
+            if retry_in := self._retry_in((email_key, client_key), now):
+                log.warning("Local sign-in slowed down for %r from %s", email, client)
+                raise SlowedDown(retry_in)
+            token = self._session_if_right(email, password, now)
+            if token is None:
+                log.warning("Local sign-in failed for %r from %s", email, client)
+                raise SignInRefused(self._count_failure((email_key, client_key), now))
+            with self._db.transaction() as conn:
+                conn.execute("DELETE FROM sign_in_throttling WHERE key = ?", (email_key,))
+            return token
+
+    def _session_if_right(self, email: str, password: str, now: datetime) -> str | None:
+        """A new session's token when the password is the User's; None otherwise."""
         with self._db.transaction() as conn:
             row = conn.execute("SELECT password FROM users WHERE email = ?", (email,)).fetchone()
         stored = row["password"] if row else None
@@ -128,14 +173,48 @@ class LocalSignIn:
         if stored is None:
             return None
         token = secrets.token_urlsafe(32)
-        now = self._clock.now().isoformat()
         with self._db.transaction() as conn:
             conn.execute(
                 "INSERT INTO sessions (token_hash, email, created_at, last_used_at)"
                 " VALUES (?, ?, ?, ?)",
-                (_token_hash(token), email, now, now),
+                (_token_hash(token), email, now.isoformat(), now.isoformat()),
             )
         return token
+
+    def _retry_in(self, keys: tuple[str, str], now: datetime) -> timedelta | None:
+        with self._db.transaction() as conn:
+            rows = conn.execute(
+                "SELECT retry_after FROM sign_in_throttling"
+                " WHERE key IN (?, ?) AND retry_after IS NOT NULL",
+                keys,
+            ).fetchall()
+        waits = [datetime.fromisoformat(row["retry_after"]) - now for row in rows]
+        return _longest([wait for wait in waits if wait > timedelta(0)])
+
+    def _count_failure(self, keys: tuple[str, str], now: datetime) -> timedelta | None:
+        """One more failure for each key; how long the next attempt waits, if it does."""
+        delays = []
+        with self._db.transaction() as conn:
+            conn.execute(
+                "DELETE FROM sign_in_throttling WHERE julianday(last_failed_at) <= julianday(?)",
+                ((now - FAILURES_FORGOTTEN_AFTER).isoformat(),),
+            )
+            for key in keys:
+                (failures,) = conn.execute(
+                    "INSERT INTO sign_in_throttling (key, failures, last_failed_at)"
+                    " VALUES (?, 1, ?) ON CONFLICT (key) DO UPDATE"
+                    " SET failures = failures + 1, last_failed_at = excluded.last_failed_at"
+                    " RETURNING failures",
+                    (key, now.isoformat()),
+                ).fetchone()
+                delay = _delay_after(failures)
+                conn.execute(
+                    "UPDATE sign_in_throttling SET retry_after = ? WHERE key = ?",
+                    (delay and (now + delay).isoformat(), key),
+                )
+                if delay:
+                    delays.append(delay)
+        return _longest(delays)
 
     def signed_in_email(self, token: str) -> str | None:
         """The email of the User the session belongs to; None when it is over. Using it keeps it
@@ -165,3 +244,14 @@ class LocalSignIn:
     def sign_out(self, token: str) -> None:
         with self._db.transaction() as conn:
             conn.execute("DELETE FROM sessions WHERE token_hash = ?", (_token_hash(token),))
+
+
+def _longest(waits: list[timedelta]) -> timedelta | None:
+    return max(waits, default=None)
+
+
+def _delay_after(failures: int) -> timedelta | None:
+    if failures < FAILURES_BEFORE_DELAY:
+        return None
+    doublings = min(failures - FAILURES_BEFORE_DELAY, 10)  # 2**10 is past the longest already
+    return min(FIRST_DELAY * (1 << doublings), LONGEST_DELAY)

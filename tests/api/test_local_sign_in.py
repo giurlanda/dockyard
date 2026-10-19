@@ -123,20 +123,22 @@ def test_the_refusal_keeps_the_email_and_speaks_italian_to_whoever_asks(local: T
 
 
 def test_an_unknown_email_is_refused_in_the_same_time_as_a_wrong_password(
-    local: TestClient,
+    instance: Instance,
 ) -> None:
     """Otherwise how long the refusal takes would tell which emails are Users."""
 
-    def fastest(email: str) -> float:
+    def fastest(email: str, address: str) -> float:
+        # From an address of its own each: five failures from one address slow it down.
+        client = listener_client(instance, ListenerName.LOCAL, address=address)
         times = []
         for _ in range(5):
             started = time.perf_counter()
-            sign_in(local, email, "a wrong password, long enough")
+            sign_in(client, email, "a wrong password, long enough")
             times.append(time.perf_counter() - started)
         return min(times)
 
-    wrong_password = fastest(ADMINISTRATOR)
-    unknown_email = fastest("nobody@example.com")
+    wrong_password = fastest(ADMINISTRATOR, "192.168.1.30")
+    unknown_email = fastest("nobody@example.com", "192.168.1.31")
 
     assert 0.5 < unknown_email / wrong_password < 2
 

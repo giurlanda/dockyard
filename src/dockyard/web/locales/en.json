@@ -316,6 +316,8 @@
   "local_sign_in.password": "Password",
   "local_sign_in.submit": "Sign in",
   "local_sign_in.refused": "The email or the password is wrong.",
+  "local_sign_in.slowed_down.seconds": "Too many failed attempts. Try again in {seconds} s.",
+  "local_sign_in.slowed_down.minutes": "Too many failed attempts. Try again in {minutes} min.",
   "local_sign_in.sign_out": "Sign out",
   "local_sign_in.required.title": "Sign-in required",
   "local_sign_in.required.body": "Sign in to Dockyard first."

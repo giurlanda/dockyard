@@ -134,6 +134,17 @@ MIGRATIONS = (
     );
     CREATE INDEX sessions_email ON sessions (email);
     """,
+    # Failed Local sign-ins, counted per email and per client address (key: 'email:…' or
+    # 'client:…'), whether or not the email is a User's. A key is forgotten a day after its last
+    # failure, and an email's once it signs in.
+    """
+    CREATE TABLE sign_in_throttling (
+        key            TEXT PRIMARY KEY,
+        failures       INTEGER NOT NULL,
+        last_failed_at TEXT NOT NULL,
+        retry_after    TEXT
+    );
+    """,
 )
 
 

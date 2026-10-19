@@ -316,6 +316,8 @@
   "local_sign_in.password": "Password",
   "local_sign_in.submit": "Accedi",
   "local_sign_in.refused": "L'email o la password non sono corrette.",
+  "local_sign_in.slowed_down.seconds": "Troppi tentativi falliti. Riprova tra {seconds} s.",
+  "local_sign_in.slowed_down.minutes": "Troppi tentativi falliti. Riprova tra {minutes} min.",
   "local_sign_in.sign_out": "Esci",
   "local_sign_in.required.title": "Accesso richiesto",
   "local_sign_in.required.body": "Prima accedi a Dockyard."

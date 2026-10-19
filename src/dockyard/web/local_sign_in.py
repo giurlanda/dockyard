@@ -5,6 +5,7 @@ Only the local listener has them (ADR 0004).
 
 from __future__ import annotations
 
+import math
 from datetime import timedelta
 from typing import Annotated
 
@@ -13,7 +14,7 @@ from fastapi.responses import HTMLResponse, RedirectResponse
 from starlette.responses import Response
 
 from ..identity import SESSION_COOKIE
-from ..local_sign_in import SESSION_LIFETIME, LocalSignIn
+from ..local_sign_in import SESSION_LIFETIME, LocalSignIn, SignInRefused, SlowedDown
 from .guard import signed_in_user
 from .pages import Pages, same_site_path
 
@@ -25,16 +26,25 @@ def local_sign_in_routes(local_sign_in: LocalSignIn, pages: Pages) -> APIRouter:
     router = APIRouter()
 
     def sign_in_page(
-        request: Request, *, next: str, email: str = "", refused: bool = False
+        request: Request, *, next: str, email: str = "", refused: SignInRefused | None = None
     ) -> HTMLResponse:
-        return pages.render(
+        # Whole seconds, rounded up: trying again when told never comes too early.
+        retry_in = None
+        if refused and refused.retry_in:
+            retry_in = math.ceil(refused.retry_in.total_seconds())
+        slowed_down = isinstance(refused, SlowedDown)
+        page = pages.render(
             request,
             "local_sign_in.html",
-            status_code=401 if refused else 200,
+            status_code=429 if slowed_down else 401 if refused else 200,
             next=same_site_path(next),
             email=email,
-            refused=refused,
+            wrong=refused is not None and not slowed_down,
+            retry_in=retry_in,
         )
+        if retry_in:
+            page.headers["Retry-After"] = str(retry_in)
+        return page
 
     @router.get(SIGN_IN, response_model=None)
     def sign_in_form(request: Request, next: str = "/") -> Response:
@@ -49,9 +59,12 @@ def local_sign_in_routes(local_sign_in: LocalSignIn, pages: Pages) -> APIRouter:
         password: Annotated[str, Form()] = "",
         next: Annotated[str, Form()] = "/",
     ) -> Response:
-        token = local_sign_in.sign_in(email, password)
-        if token is None:
-            return sign_in_page(request, next=next, email=email, refused=True)
+        # The local listener admits no request without a client address.
+        client = request.client.host if request.client else ""
+        try:
+            token = local_sign_in.sign_in(email, password, client)
+        except SignInRefused as refused:
+            return sign_in_page(request, next=next, email=email, refused=refused)
         return _with_session(RedirectResponse(same_site_path(next), status_code=303), token)
 
     @router.post(SIGN_OUT)
