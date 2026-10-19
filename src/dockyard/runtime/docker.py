@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import http.client
 import io
+import ipaddress
 import os
 import secrets
 import socket
@@ -33,6 +34,7 @@ from . import (
     GitToken,
     ImageCheck,
     ImageMissing,
+    IPNetwork,
     LoginNotRunning,
     ProjectMissing,
     ProjectNotRunning,
@@ -151,6 +153,9 @@ CHECK_IMAGE_SCRIPT = 'echo "uid: $(id -u)"; echo "claude: $(claude --version 2>/
 # and the host firewall knows its bridge by its interface name.
 PROJECTS_NETWORK = "dockyard-projects"
 PROJECTS_BRIDGE = "dockyard0"
+# The network drivers whose addresses only Docker hands out. macvlan and ipvlan networks share a
+# physical network's own range: their addresses may be the LAN's.
+DOCKER_CARRIED = ("bridge", "overlay")
 
 # Every environment that is not a Privileged Project runs with these.
 HARDENING: dict[str, Any] = {
@@ -190,6 +195,17 @@ class DockerRuntime:
     def ensure_infrastructure(self) -> None:
         with self._docker():
             self._ensure_network()
+
+    def networks(self) -> list[IPNetwork]:
+        with self._docker():
+            found = self._client.networks.list()
+        return [
+            ipaddress.ip_network(config["Subnet"], strict=False)
+            for network in found
+            if network.attrs.get("Driver") in DOCKER_CARRIED
+            for config in (network.attrs.get("IPAM") or {}).get("Config") or []
+            if config.get("Subnet")
+        ]
 
     def claude_account_connected(self, user: str) -> bool:
         with self._docker():

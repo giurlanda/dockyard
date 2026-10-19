@@ -69,6 +69,17 @@ class DevelopmentHeaderIdentity:
         return conn.headers.get(DEVELOPMENT_HEADER, "").strip() or None
 
 
+class LocalSignInIdentity:
+    """Whoever signed in with Local sign-in. Never a Cloudflare Access token: the local listener
+    ignores them.
+
+    Nobody can sign in yet, so nobody is signed in.
+    """
+
+    def verified_email(self, conn: HTTPConnection) -> str | None:
+        return None
+
+
 def identity_for(source: IdentitySource, signing_keys: SigningKeys | None = None) -> Identity:
     match source:
         case CloudflareAccess():

@@ -36,6 +36,8 @@
   "sign_in.lost": "The connection to the terminal was lost. Reload the page to see it again: the sign-in keeps waiting for you.",
   "refused.cross_site.title": "Refused: sent by another site",
   "refused.cross_site.body": "This request reached Dockyard from another site, so it was refused: only pages of Dockyard itself can act on your behalf. If you were using Dockyard at its usual address, tell your Administrator: the proxy in front of Dockyard must pass the original Host header through.",
+  "refused.outside_local_networks.title": "Not reachable",
+  "refused.outside_local_networks.body": "This address is not reachable from your network.",
   "runtime_unavailable.title": "Docker is unreachable",
   "runtime_unavailable.body": "Dockyard cannot reach Docker right now, so it can neither check your Claude Account nor run your Projects. Try again in a few minutes; if it keeps happening, tell your Administrator: the details are in Dockyard's log.",
   "project_refused.repository_invalid.body": "This is not the address of a repository. Use https://github.com/owner/repository or https://gitlab.com/group/project, as your browser shows it on the repository's page.",

@@ -1,18 +1,23 @@
 """One Instance, served on each of its listeners: the ways in share the same Users and Projects."""
 
+import http.client
+import ipaddress
 import os
 import signal
 import socket
+import ssl
 import subprocess
 import sys
 import threading
 import time
 import urllib.request
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
+from contextlib import contextmanager
 from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
+from cryptography import x509
 
 from dockyard.runtime.fake import FakeRuntime
 from dockyard.serving import Servers
@@ -65,11 +70,8 @@ def _accepts_connections(port: int) -> bool:
         return probe.connect_ex(("127.0.0.1", port)) == 0
 
 
-def test_every_listener_is_served_until_dockyard_stops(
-    start_instance: Callable[..., Instance], proxy: AccessProxy
-) -> None:
-    port = _free_port()
-    instance = start_instance(DOCKYARD_LISTEN_HOST="127.0.0.1", DOCKYARD_LISTEN_PORT=str(port))
+@contextmanager
+def _serving(instance: Instance) -> Iterator[None]:
     servers = Servers(instance.listeners.values(), log_level="warning")
     serving = threading.Thread(target=servers.run, daemon=True)
     serving.start()
@@ -77,16 +79,27 @@ def test_every_listener_is_served_until_dockyard_stops(
     while not servers.started:
         assert time.monotonic() < deadline and serving.is_alive(), "Dockyard did not start"
         time.sleep(0.05)
-
-    request = urllib.request.Request(
-        f"http://127.0.0.1:{port}/api/me", headers=proxy.headers(ADMINISTRATOR)
-    )
-    with urllib.request.urlopen(request, timeout=5) as response:
-        assert response.status == 200
-
-    servers.stop()
-    serving.join(timeout=10)
+    try:
+        yield
+    finally:
+        servers.stop()
+        serving.join(timeout=10)
     assert not serving.is_alive()
+
+
+def test_every_listener_is_served_until_dockyard_stops(
+    start_instance: Callable[..., Instance], proxy: AccessProxy
+) -> None:
+    port = _free_port()
+    instance = start_instance(DOCKYARD_LISTEN_HOST="127.0.0.1", DOCKYARD_LISTEN_PORT=str(port))
+
+    with _serving(instance):
+        request = urllib.request.Request(
+            f"http://127.0.0.1:{port}/api/me", headers=proxy.headers(ADMINISTRATOR)
+        )
+        with urllib.request.urlopen(request, timeout=5) as response:
+            assert response.status == 200
+
     assert not _accepts_connections(port)
 
 
@@ -141,3 +154,60 @@ def test_on_sigterm_dockyard_stops_every_listener_and_ends_by_the_signal(tmp_pat
     finally:
         dockyard.kill()
     assert not _accepts_connections(port)
+
+
+def _https_get(port: int, path: str) -> tuple[int, x509.Certificate]:
+    """What the local listener answers over HTTPS, and the certificate it showed."""
+    context = ssl.create_default_context()
+    context.check_hostname = False
+    context.verify_mode = ssl.CERT_NONE  # self-signed: the browser asks the person instead
+    connection = http.client.HTTPSConnection("127.0.0.1", port, context=context, timeout=5)
+    try:
+        connection.request("GET", path)
+        status = connection.getresponse().status
+        assert connection.sock is not None
+        shown = connection.sock.getpeercert(binary_form=True)
+    finally:
+        connection.close()
+    assert shown is not None
+    return status, x509.load_der_x509_certificate(shown)
+
+
+def test_the_local_listener_serves_https_with_a_self_signed_certificate_for_its_addresses(
+    start_instance: Callable[..., Instance],
+) -> None:
+    port = _free_port()
+    instance = start_instance(
+        DOCKYARD_LISTEN_HOST="127.0.0.1",
+        DOCKYARD_LISTEN_PORT=str(_free_port()),
+        DOCKYARD_LOCAL_PORT=str(port),
+        DOCKYARD_LOCAL_ADDRESS="192.168.1.10",
+        DOCKYARD_LOCAL_URL="https://dockyard.lan:8443",
+    )
+
+    with _serving(instance):
+        status, certificate = _https_get(port, "/api/me")
+
+    assert status == 403  # from the loopback, which is not a Local network
+    names = certificate.extensions.get_extension_for_class(x509.SubjectAlternativeName).value
+    assert set(names.get_values_for_type(x509.DNSName)) == {"localhost", "dockyard.lan"}
+    assert names.get_values_for_type(x509.IPAddress) == [ipaddress.IPv4Address("192.168.1.10")]
+
+
+def test_from_a_local_network_the_local_listener_answers_not_signed_in(
+    start_instance: Callable[..., Instance],
+) -> None:
+    port = _free_port()
+    instance = start_instance(
+        DOCKYARD_CF_ACCESS_TEAM=None,
+        DOCKYARD_CF_ACCESS_AUD=None,
+        DOCKYARD_LISTEN_HOST="127.0.0.1",
+        DOCKYARD_LOCAL_PORT=str(port),
+        DOCKYARD_LOCAL_ADDRESS="127.0.0.1",
+        DOCKYARD_LOCAL_NETWORKS="127.0.0.0/8",
+    )
+
+    with _serving(instance):
+        status, _ = _https_get(port, "/api/me")
+
+    assert status == 401

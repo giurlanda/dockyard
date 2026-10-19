@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import ipaddress
 import queue
 import re
 import secrets
@@ -23,6 +24,7 @@ from . import (
     GitToken,
     ImageCheck,
     ImageMissing,
+    IPNetwork,
     LoginNotRunning,
     Output,
     ProjectMissing,
@@ -57,6 +59,9 @@ REMOVE_CLAUDE = re.compile(r"RUN rm (-f )?/usr/local/bin/claude")
 CHANGE_UID = re.compile(r"RUN usermod --non-unique --uid (?P<uid>\d+) ubuntu")
 FAIL = "RUN false"
 FIRST_INSTRUCTION = 3  # the step of the first build instruction: after FROM and USER root
+# Docker's networks, as on a host running Dockyard's compose file: the default bridge, the
+# compose default network (where cloudflared reaches Dockyard), docker-api, and the Projects one.
+DOCKER_NETWORKS = ("172.17.0.0/16", "172.18.0.0/16", "172.19.0.0/16", "172.20.0.0/16")
 
 
 class FakeRuntime:
@@ -141,6 +146,10 @@ class FakeRuntime:
 
     def ensure_infrastructure(self) -> None:
         self.check_reachable()
+
+    def networks(self) -> list[IPNetwork]:
+        self.check_reachable()
+        return [ipaddress.ip_network(subnet) for subnet in DOCKER_NETWORKS]
 
     def crash(self, project: str) -> None:
         """The Project's Remote Control Server keeps failing from now on, until started again."""

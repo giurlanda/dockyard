@@ -10,6 +10,7 @@ from __future__ import annotations
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from enum import StrEnum
+from ipaddress import IPv4Network, IPv6Network
 from typing import Protocol
 
 LOGIN_TIMEOUT = 15 * 60  # seconds a login environment waits for its User before it ends
@@ -22,6 +23,9 @@ PROJECT_PIDS_LIMIT = 2048
 PROJECT_LOG_LINES = 1000  # how much of what a Project printed its log and console show first
 # What Claude Code shows when the Claude config does not trust the directory it starts in.
 TRUST_PROMPT = "Quick safety check"
+
+
+IPNetwork = IPv4Network | IPv6Network
 
 
 def project_path(project: str) -> str:
@@ -132,6 +136,12 @@ class Runtime(Protocol):
     def ensure_infrastructure(self) -> None:
         """Create what every Project needs if it is missing: the Projects network, where nothing
         else is attached and Projects cannot reach each other."""
+        ...
+
+    def networks(self) -> list[IPNetwork]:
+        """The address ranges of the networks Docker carries itself (bridge and overlay): the
+        Projects network, Dockyard's own networks, whose gateway relays published ports, and any
+        other on the host. Raises RuntimeUnavailable."""
         ...
 
     def claude_account_connected(self, user: str) -> bool:

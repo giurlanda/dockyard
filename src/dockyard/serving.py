@@ -26,7 +26,14 @@ class Servers:
         self._servers = [
             _Server(
                 uvicorn.Config(
-                    listener.app, host=listener.host, port=listener.port, log_level=log_level
+                    listener.app,
+                    host=listener.host,
+                    port=listener.port,
+                    log_level=log_level,
+                    # The client address is the connection's: the local listener judges by it.
+                    proxy_headers=False,
+                    ssl_certfile=listener.certificate.certfile if listener.certificate else None,
+                    ssl_keyfile=listener.certificate.keyfile if listener.certificate else None,
                 )
             )
             for listener in listeners

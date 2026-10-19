@@ -8,6 +8,7 @@ import re
 from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
+from urllib.parse import urlsplit
 
 from cryptography.fernet import Fernet
 
@@ -22,6 +23,9 @@ GENERATE_SECRET_KEY = "Generate one with: openssl rand -base64 32 | tr '+/' '-_'
 # Published by the Release workflow. compose.yaml always sets DOCKYARD_BASE_IMAGE, to the Base
 # Image of DOCKYARD_VERSION: this default serves Dockyard run outside compose.
 DEFAULT_BASE_IMAGE = "ghcr.io/giurlanda/dockyard-base:latest"
+# The private ranges, and the range VPNs such as Tailscale give their devices.
+DEFAULT_LOCAL_NETWORKS = "10.0.0.0/8,172.16.0.0/12,192.168.0.0/16,100.64.0.0/10"
+EVERY_INTERFACE = ipaddress.IPv4Address("0.0.0.0")
 
 
 class ConfigError(Exception):
@@ -54,10 +58,25 @@ IdentitySource = CloudflareAccess | DevelopmentHeader
 
 
 @dataclass(frozen=True)
+class LocalSignIn:
+    """Local sign-in: Dockyard's own sign-in page, on a listener of its own (ADR 0004)."""
+
+    port: int  # inside the container
+    address: ipaddress.IPv4Address  # of the host, where the port is published
+    networks: tuple[ipaddress.IPv4Network, ...]  # the Local networks
+    url: str | None  # where people open it, when not at the address
+
+    @property
+    def on_every_interface(self) -> bool:
+        return self.address == EVERY_INTERFACE
+
+
+@dataclass(frozen=True)
 class Settings:
     secret_key: str
     first_administrator_email: str
-    identity: IdentitySource
+    identity: IdentitySource | None  # of the tunnel listener; None: there is no tunnel listener
+    local: LocalSignIn | None
     data_dir: Path
     listen_host: str
     listen_port: int
@@ -94,31 +113,31 @@ class Settings:
             )
 
         dev_identity = env.get("DOCKYARD_DEV_IDENTITY", "").strip().lower()
-        identity: IdentitySource
+        identity: IdentitySource | None
         if dev_identity in TRUE:
             identity = DevelopmentHeader()
         else:
             if dev_identity not in FALSE:
                 problems.append("DOCKYARD_DEV_IDENTITY must be true or false.")
-            team = setting(
-                "DOCKYARD_CF_ACCESS_TEAM",
-                "your Cloudflare Zero Trust team name (the 'acme' in acme.cloudflareaccess.com).",
-            )
-            if team and not TEAM_NAME.match(team):
-                problems.append(
-                    "DOCKYARD_CF_ACCESS_TEAM must be the team name only, "
-                    f"e.g. 'acme' for acme.cloudflareaccess.com, not {team!r}."
-                )
-            audience = setting(
-                "DOCKYARD_CF_ACCESS_AUD",
-                "the Application Audience (AUD) tag of the Cloudflare Access application "
-                "in front of Dockyard.",
-            )
-            identity = CloudflareAccess(team=team.lower(), audience=audience)
+            identity = _cloudflare_access(env, problems)
 
         listen_port = env.get("DOCKYARD_LISTEN_PORT", "").strip() or "8000"
-        if not (listen_port.isdigit() and 1 <= int(listen_port) <= 65535):
+        if not _is_port(listen_port):
             problems.append(f"DOCKYARD_LISTEN_PORT must be a port number, not {listen_port!r}.")
+
+        local = _local_sign_in(env, problems)
+        if local and identity and _is_port(listen_port) and local.port == int(listen_port):
+            problems.append(
+                f"DOCKYARD_LOCAL_PORT must differ from DOCKYARD_LISTEN_PORT ({listen_port}): "
+                "each way in has a listener of its own."
+            )
+        if identity is None and local is None:
+            problems.append(
+                "No way in is configured, so nobody could reach Dockyard. Enable Cloudflare "
+                "Access (DOCKYARD_CF_ACCESS_TEAM and DOCKYARD_CF_ACCESS_AUD), Local sign-in "
+                "(DOCKYARD_LOCAL_PORT, set by compose.local.yaml, and DOCKYARD_LOCAL_ADDRESS), "
+                "or both."
+            )
 
         dns = env.get("DOCKYARD_PROJECTS_DNS", "").strip()
         projects_dns = tuple(server.strip() for server in dns.split(",")) if dns else DEFAULT_DNS
@@ -163,6 +182,7 @@ class Settings:
             secret_key=secret_key,
             first_administrator_email=administrator,
             identity=identity,
+            local=local,
             data_dir=Path(env.get("DOCKYARD_DATA_DIR", "").strip() or "/data"),
             listen_host=env.get("DOCKYARD_LISTEN_HOST", "").strip() or "127.0.0.1",
             listen_port=int(listen_port),
@@ -172,6 +192,86 @@ class Settings:
                 max_cpus=max_cpus, max_memory=round(max_memory * GIB), max_active=int(max_active)
             ),
         )
+
+
+def _cloudflare_access(env: Mapping[str, str], problems: list[str]) -> CloudflareAccess | None:
+    """Both settings or neither: one alone is a typo that would turn Cloudflare off."""
+    team = env.get("DOCKYARD_CF_ACCESS_TEAM", "").strip()
+    audience = env.get("DOCKYARD_CF_ACCESS_AUD", "").strip()
+    if not team and not audience:
+        return None
+    if not team:
+        problems.append(
+            "DOCKYARD_CF_ACCESS_TEAM is missing: your Cloudflare Zero Trust team name (the 'acme' "
+            "in acme.cloudflareaccess.com). Set both Cloudflare Access settings, or neither."
+        )
+    elif not TEAM_NAME.match(team):
+        problems.append(
+            "DOCKYARD_CF_ACCESS_TEAM must be the team name only, "
+            f"e.g. 'acme' for acme.cloudflareaccess.com, not {team!r}."
+        )
+    if not audience:
+        problems.append(
+            "DOCKYARD_CF_ACCESS_AUD is missing: the Application Audience (AUD) tag of the "
+            "Cloudflare Access application in front of Dockyard. Set both Cloudflare Access "
+            "settings, or neither."
+        )
+    return CloudflareAccess(team=team.lower(), audience=audience)
+
+
+def _local_sign_in(env: Mapping[str, str], problems: list[str]) -> LocalSignIn | None:
+    """On when the local port is set; the other local settings matter only then."""
+    port = env.get("DOCKYARD_LOCAL_PORT", "").strip()
+    if not port:
+        return None
+    if not _is_port(port):
+        problems.append(f"DOCKYARD_LOCAL_PORT must be a port number, not {port!r}.")
+
+    text = env.get("DOCKYARD_LOCAL_ADDRESS", "").strip()
+    address = EVERY_INTERFACE
+    try:
+        address = ipaddress.IPv4Address(text)
+    except ValueError:
+        if text:
+            problems.append(
+                "DOCKYARD_LOCAL_ADDRESS must be an IPv4 address of the host, e.g. 192.168.1.10, "
+                f"not {text!r}: Local sign-in is never published on IPv6."
+            )
+        else:
+            problems.append(
+                "DOCKYARD_LOCAL_ADDRESS is missing: the host's IPv4 address on the LAN or VPN "
+                "where Local sign-in is published, e.g. 192.168.1.10."
+            )
+
+    listed = env.get("DOCKYARD_LOCAL_NETWORKS", "").strip() or DEFAULT_LOCAL_NETWORKS
+    networks: list[ipaddress.IPv4Network] = []
+    try:
+        networks = [ipaddress.IPv4Network(cidr.strip(), strict=False) for cidr in listed.split(",")]
+    except ValueError:
+        problems.append(
+            "DOCKYARD_LOCAL_NETWORKS must be IPv4 ranges separated by commas, e.g. "
+            f"192.168.1.0/24,100.64.0.0/10, not {listed!r}."
+        )
+
+    url = env.get("DOCKYARD_LOCAL_URL", "").strip() or None
+    if url is not None:
+        parts = urlsplit(url)
+        if parts.scheme != "https" or not parts.hostname:
+            problems.append(
+                "DOCKYARD_LOCAL_URL must be the https:// address where people open Local "
+                f"sign-in, e.g. https://dockyard.lan:8443, not {url!r}."
+            )
+
+    return LocalSignIn(
+        port=int(port) if _is_port(port) else 0,
+        address=address,
+        networks=tuple(networks),
+        url=url,
+    )
+
+
+def _is_port(text: str) -> bool:
+    return text.isdigit() and 1 <= int(text) <= 65535
 
 
 def _is_ip_address(text: str) -> bool:

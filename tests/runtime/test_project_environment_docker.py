@@ -2,6 +2,7 @@
 it is on, what it mounts, and where its Git Credential is not. These look at Docker directly, from
 outside the environment."""
 
+import ipaddress
 import json
 from collections.abc import Callable
 
@@ -119,3 +120,20 @@ def run(environment: Container, script: str) -> str:
     exit_code, output = environment.exec_run(["bash", "-c", script], user="1000:1000")
     assert exit_code == 0 and isinstance(output, bytes), output
     return output.decode(errors="replace")
+
+
+def test_a_projects_address_and_its_gateway_are_in_dockers_networks(
+    runtime: Runtime, new_user: Callable[[], str], docker_daemon: docker.DockerClient
+) -> None:
+    """The local listener refuses them: a Project must never pass as a device on the LAN."""
+    user = new_user()
+    project = cloned(runtime, user)
+    runtime.start_project(user, project, name="Hello", permission_mode="default")
+
+    (attached,) = (
+        environment_of(docker_daemon, project).attrs["NetworkSettings"]["Networks"].values()
+    )
+    networks = runtime.networks()
+
+    for address in (attached["IPAddress"], attached["Gateway"]):
+        assert any(ipaddress.ip_address(address) in network for network in networks), address

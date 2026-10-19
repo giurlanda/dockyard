@@ -27,15 +27,16 @@ from ..accounts import Accounts, Role
 from ..clock import Clock, SystemClock
 from ..database import Database
 from ..git_credentials import GitCredentials
-from ..identity import Identity, SigningKeys, identity_for
+from ..identity import Identity, LocalSignInIdentity, SigningKeys, identity_for
 from ..images import Images
 from ..projects import Projects
 from ..runtime import Runtime, RuntimeUnavailable
 from ..settings import Settings
+from ..tls import Certificate, local_certificate
 from .all_projects import all_projects_routes
 from .claude_account import claude_account_routes, claude_account_status
 from .git_credentials import git_credentials_routes
-from .guard import CurrentUser, IdentityGuard, NotAdministrator
+from .guard import ClientNetworks, CurrentUser, IdentityGuard, NotAdministrator
 from .i18n import LANGUAGE_COOKIE, Language
 from .images import images_routes
 from .pages import Pages, is_api
@@ -51,6 +52,7 @@ class ListenerName(StrEnum):
     """The ways into an Instance, each served on a listener of its own (ADR 0004)."""
 
     TUNNEL = "tunnel"  # reached by cloudflared, identity from Cloudflare Access
+    LOCAL = "local"  # published on the host, over HTTPS, identity from Local sign-in
 
 
 @dataclass(frozen=True)
@@ -60,6 +62,7 @@ class Listener:
     app: FastAPI
     host: str
     port: int
+    certificate: Certificate | None = None  # served over HTTPS with it; else plain HTTP
 
 
 @dataclass(frozen=True)
@@ -84,7 +87,9 @@ def create_instance(
     *,
     signing_keys: SigningKeys | None = None,
     clock: Clock | None = None,
+    certificate: Certificate | None = None,
 ) -> Instance:
+    """certificate: the local listener's, when already read; else read from the data volume."""
     database = Database(settings.data_dir / "dockyard.db")
     database.migrate()
     accounts = Accounts(database)
@@ -100,22 +105,41 @@ def create_instance(
     upkeep = _Upkeep(projects, images)
     pages = Pages()
 
-    tunnel = _listener_app(
-        identity_for(settings.identity, signing_keys),
-        runtime,
-        accounts,
-        git_credentials,
-        projects,
-        images,
-        upkeep,
-        pages,
-    )
-    return Instance(
-        clock=clock or SystemClock(),
-        listeners={
-            ListenerName.TUNNEL: Listener(tunnel, settings.listen_host, settings.listen_port)
-        },
-    )
+    listeners: dict[ListenerName, Listener] = {}
+    if settings.identity is not None:
+        tunnel = _listener_app(
+            identity_for(settings.identity, signing_keys),
+            runtime,
+            accounts,
+            git_credentials,
+            projects,
+            images,
+            upkeep,
+            pages,
+        )
+        listeners[ListenerName.TUNNEL] = Listener(
+            tunnel, settings.listen_host, settings.listen_port
+        )
+    if settings.local is not None:
+        local = _listener_app(
+            LocalSignInIdentity(),
+            runtime,
+            accounts,
+            git_credentials,
+            projects,
+            images,
+            upkeep,
+            pages,
+            # Docker's networks as they are at start: Docker gives a new one a range of its own.
+            clients=ClientNetworks(admitted=settings.local.networks, refused=runtime.networks()),
+        )
+        listeners[ListenerName.LOCAL] = Listener(
+            local,
+            settings.listen_host,
+            settings.local.port,
+            certificate or local_certificate(settings.data_dir, settings.local),
+        )
+    return Instance(clock=clock or SystemClock(), listeners=listeners)
 
 
 class _Upkeep:
@@ -153,6 +177,8 @@ def _listener_app(
     images: Images,
     upkeep: _Upkeep,
     pages: Pages,
+    *,
+    clients: ClientNetworks | None = None,
 ) -> FastAPI:
     app = FastAPI(
         title="Dockyard",
@@ -166,6 +192,7 @@ def _listener_app(
         identity=identity,
         accounts=accounts,
         refuse=pages.refusal,
+        clients=clients,
     )
 
     @app.exception_handler(RuntimeUnavailable)

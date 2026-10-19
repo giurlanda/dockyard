@@ -16,5 +16,5 @@ ENV PATH="/app/.venv/bin:$PATH" \
     DOCKYARD_DATA_DIR=/data \
     DOCKYARD_LISTEN_HOST=0.0.0.0
 USER dockyard
-EXPOSE 8000
+EXPOSE 8000 8443
 CMD ["python", "-m", "dockyard"]

@@ -6,7 +6,7 @@ from jinja2 import Environment, PackageLoader, StrictUndefined, select_autoescap
 from starlette.requests import HTTPConnection
 from starlette.responses import HTMLResponse, JSONResponse, Response
 
-from .guard import Refused
+from .guard import Refusal, Refused
 from .i18n import LANGUAGE_NAMES, language_for, translator
 
 
@@ -57,6 +57,9 @@ class Pages:
         )
 
     def refusal(self, conn: HTTPConnection, refused: Refused) -> Response:
+        if refused.reason == Refusal.OUTSIDE_LOCAL_NETWORKS and not is_api(conn):
+            # A page that names nothing of the Instance, not even what it is.
+            return self.render(conn, "unreachable.html", status_code=refused.reason.status_code)
         return self.problem(
             conn,
             refused.reason,

@@ -36,6 +36,8 @@
   "sign_in.lost": "La connessione al terminale si è interrotta. Ricarica la pagina per rivederlo: l'accesso resta in attesa.",
   "refused.cross_site.title": "Rifiutata: inviata da un altro sito",
   "refused.cross_site.body": "Questa richiesta è arrivata a Dockyard da un altro sito ed è stata rifiutata: solo le pagine di Dockyard possono agire per tuo conto. Se stavi usando Dockyard al suo indirizzo abituale, avvisa il tuo Amministratore: il proxy davanti a Dockyard deve inoltrare l'header Host originale.",
+  "refused.outside_local_networks.title": "Non raggiungibile",
+  "refused.outside_local_networks.body": "Questo indirizzo non è raggiungibile dalla tua rete.",
   "runtime_unavailable.title": "Docker non raggiungibile",
   "runtime_unavailable.body": "Al momento Dockyard non raggiunge Docker, quindi non può né verificare il tuo Account Claude né far funzionare i tuoi Progetti. Riprova tra qualche minuto; se succede ancora, avvisa il tuo Amministratore: i dettagli sono nel log di Dockyard.",
   "project_refused.repository_invalid.body": "Questo non è l'indirizzo di un repository. Usa https://github.com/proprietario/repository o https://gitlab.com/gruppo/progetto, come lo mostra il browser sulla pagina del repository.",

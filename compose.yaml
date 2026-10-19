@@ -42,7 +42,8 @@ services:
       DOCKYARD_MAX_ACTIVE_PROJECTS: ${DOCKYARD_MAX_ACTIVE_PROJECTS:-}
     volumes:
       - dockyard-data:/data
-    # No published port: people reach Dockyard only through the tunnel, behind Cloudflare Access.
+    # No published port: people reach Dockyard through the tunnel, behind Cloudflare Access, and
+    # through Local sign-in only when compose.local.yaml publishes its port.
     # docker-api reaches the socket proxy; default reaches the tunnel client and the internet
     # (Cloudflare Access signing keys).
     networks: [docker-api, default]
