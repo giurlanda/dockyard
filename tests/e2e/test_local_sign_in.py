@@ -294,3 +294,47 @@ def test_a_user_turns_on_the_second_factor_and_signs_in_again_with_a_code_on_a_p
         assert fits_the_screen(page)
     finally:
         context.close()
+
+
+@pytest.mark.parametrize("language", ["English", "Italiano"])
+def test_an_administrator_removes_a_users_second_factor_on_a_phone(
+    browser: Browser, local_url: str, language: str
+) -> None:
+    administrator = browser.new_context(
+        base_url=local_url,
+        ignore_https_errors=True,
+        locale="en-US",
+        viewport=PHONE,  # type: ignore[arg-type]
+        permissions=["clipboard-read", "clipboard-write"],
+    )
+    person = browser.new_context(ignore_https_errors=True, locale="en-US")
+    try:
+        page = administrator.new_page()
+        link = invite_and_copy_the_activation_link(page)
+        mine = person.new_page()
+        mine.goto(link)
+        mine.locator("#password").fill(INVITED_PASSWORD)
+        mine.locator("#repeated").fill(INVITED_PASSWORD)
+        mine.locator("#repeated").press("Enter")
+        mine.get_by_test_id("user-email").click()
+        mine.locator("#second-factor-password").fill(INVITED_PASSWORD)
+        mine.locator("#second-factor-password").press("Enter")
+        secret = mine.locator("#second-factor-secret").inner_text()
+        mine.locator("#code").fill(authenticator_code(secret, time.time()))
+        mine.locator("#code").press("Enter")
+        expect(mine.locator(".recovery-code")).to_have_count(10)
+
+        page.goto("/users")
+        page.get_by_role("button", name=language).click()
+        expect(page.get_by_role("button", name=language)).to_have_attribute("aria-pressed", "true")
+        listed = page.locator(f"li[data-user='{INVITED}']")
+        expect(listed.locator(".badge.good")).to_be_visible()  # their Second factor
+        assert fits_the_screen(page)
+        listed.locator("form[action$='/second-factor/remove'] button").click()
+
+        expect(page.get_by_role("status")).to_contain_text(INVITED)
+        expect(listed.locator("form[action$='/second-factor/remove']")).to_have_count(0)
+        assert fits_the_screen(page)
+    finally:
+        administrator.close()
+        person.close()

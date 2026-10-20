@@ -146,6 +146,14 @@ class CodeAsked:
 
 
 @dataclass(frozen=True)
+class Protection:
+    """What protects a User's Local sign-in."""
+
+    password: bool
+    second_factor: bool
+
+
+@dataclass(frozen=True)
 class _Scrypt:
     """The standard library's scrypt; its parameters are stored with each hash, so new hashes can
     use stronger ones while the old ones still verify."""
@@ -500,6 +508,18 @@ class LocalSignIn:
     def has_second_factor(self, email: str) -> bool:
         return self.recovery_codes_left(email) is not None
 
+    def protections(self) -> dict[str, Protection]:
+        """Every User's, by email."""
+        with self._db.transaction() as conn:
+            rows = conn.execute(
+                "SELECT email, password IS NOT NULL AS password,"
+                " second_factor IS NOT NULL AS second_factor FROM users"
+            ).fetchall()
+        return {
+            row["email"]: Protection(bool(row["password"]), bool(row["second_factor"]))
+            for row in rows
+        }
+
     def recovery_codes_left(self, email: str) -> int | None:
         """How many recovery codes the User has not used; None when they have no Second factor."""
         with self._db.transaction() as conn:
@@ -599,6 +619,25 @@ class LocalSignIn:
         self._with_code_or_password(
             email, code_or_password, client, "Turning off the Second factor", _remove_second_factor
         )
+
+    def remove_second_factor(self, email: str) -> bool:
+        """An Administrator removes the User's Second factor, for a User who lost their phone and
+        their recovery codes: the password alone signs them in, until they turn it on again.
+        False when they have none.
+
+        Raises NotAUser.
+        """
+        email = normalise_email(email)
+        with self._db.transaction() as conn:
+            row = conn.execute(
+                "SELECT second_factor IS NOT NULL AS on_ FROM users WHERE email = ?", (email,)
+            ).fetchone()
+            if row is None:
+                raise NotAUser
+            if not row["on_"]:
+                return False
+            _remove_second_factor(conn, email)
+        return True
 
     def _with_code_or_password(
         self,

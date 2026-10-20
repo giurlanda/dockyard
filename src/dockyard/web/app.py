@@ -279,7 +279,9 @@ def _listener_app(
     app.include_router(claude_account_routes(runtime, projects, pages))
     app.include_router(projects_routes(projects, git_credentials, images, pages))
     app.include_router(git_credentials_routes(git_credentials, pages))
-    app.include_router(users_routes(accounts, projects, runtime, pages, activation_links))
+    app.include_router(
+        users_routes(accounts, projects, runtime, pages, activation_links, passwords)
+    )
     app.include_router(all_projects_routes(projects, pages))
     app.include_router(images_routes(images, pages))
     if local_sign_in:

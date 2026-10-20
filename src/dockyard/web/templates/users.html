@@ -50,11 +50,27 @@
     <h2 id="users">{{ t("users.heading") }}</h2>
     <ul class="projects">
       {% for listed in users %}
-        <li>
+        <li data-user="{{ listed.email }}">
           <a href="/users/{{ listed.email|urlencode }}">{{ listed.email }}</a>
           <span class="badge">{{ t("role." ~ listed.role) }}</span>
           {% if listed.privileged_projects %}<span class="badge bad">{{ t("user.privileged.heading") }}</span>{% endif %}
           {% if listed.email == user.email %}<span class="muted">{{ t("users.you") }}</span>{% endif %}
+          {% set protection = protections.get(listed.email) if protections is not none %}
+          {% if protection %}
+            {% if protection.password %}<span class="badge">{{ t("users.password.on") }}</span>
+            {% else %}<span class="badge warn">{{ t("users.password.off") }}</span>{% endif %}
+            {% if protection.second_factor %}<span class="badge good">{{ t("users.second_factor.on") }}</span>
+            {% else %}<span class="muted">{{ t("users.second_factor.off") }}</span>{% endif %}
+          {% endif %}
+          {% if protection and protection.second_factor and listed.email != user.email %}
+            <form method="post" action="/users/{{ listed.email|urlencode }}/second-factor/remove">
+              <button aria-label="{{ t('users.second_factor.remove_email', email=listed.email) }}">
+                {{ t("users.second_factor.remove") }}</button>
+            </form>
+          {% endif %}
+          {% if second_factor_removed == listed.email %}
+            <p class="outcome good" role="status">{{ t("users.second_factor.removed", email=listed.email) }}</p>
+          {% endif %}
           {% if activation_links %}
             <form method="post" action="/users/{{ listed.email|urlencode }}/activation-link">
               <button aria-label="{{ t('users.activation_link.new_email', email=listed.email) }}">

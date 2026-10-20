@@ -35,6 +35,11 @@ def main(argv: Sequence[str] | None = None) -> int:
         help="give a User a password for Local sign-in, signing them out everywhere",
     )
     set_password.add_argument("email", help="a User's, or the first Administrator's")
+    remove_second_factor = commands.add_parser(
+        "remove-second-factor",
+        help="remove a User's Second factor, so that their password alone signs them in",
+    )
+    remove_second_factor.add_argument("email", help="a User's")
     arguments = parser.parse_args(argv)
 
     logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s: %(message)s")
@@ -45,6 +50,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         return 2
     if arguments.command == "set-password":
         return _set_password(settings, arguments.email)
+    if arguments.command == "remove-second-factor":
+        return _remove_second_factor(settings, arguments.email)
     return _serve(settings)
 
 
@@ -103,19 +110,22 @@ _PASSWORD_RULES = {
 }
 
 
-def _set_password(settings: Settings, email: str) -> int:
+def _local_sign_in(settings: Settings, when_off: str) -> LocalSignIn:
+    """Local sign-in on the Instance's data, warning that `when_off` when it is off."""
     if settings.local is None:
         print(
-            "Warning: Local sign-in is off (DOCKYARD_LOCAL_PORT is not set): the password will "
-            "work once it is on.",
+            f"Warning: Local sign-in is off (DOCKYARD_LOCAL_PORT is not set): {when_off}",
             file=sys.stderr,
         )
     database = Database(settings.data_dir / "dockyard.db")
     database.migrate()
     # As at every start: the first Administrator is a User even before Dockyard first started.
     Accounts(database).bootstrap_first_administrator(settings.first_administrator_email)
-    local_sign_in = LocalSignIn(database, settings.secret_key, SystemClock())
+    return LocalSignIn(database, settings.secret_key, SystemClock())
 
+
+def _set_password(settings: Settings, email: str) -> int:
+    local_sign_in = _local_sign_in(settings, "the password will work once it is on.")
     password = _ask("New password: ")
     if _ask("The same password again: ") != password:
         print("The two passwords differ: nothing was changed.", file=sys.stderr)
@@ -133,6 +143,24 @@ def _set_password(settings: Settings, email: str) -> int:
         )
         return 1
     print(f"Password set for {normalise_email(email)}: every session of theirs is signed out.")
+    return 0
+
+
+def _remove_second_factor(settings: Settings, email: str) -> int:
+    local_sign_in = _local_sign_in(settings, "it is removed all the same.")
+    email = normalise_email(email)
+    try:
+        removed = local_sign_in.remove_second_factor(email)
+    except NotAUser:
+        print(f"{email} is not a User of this Instance: nothing was changed.", file=sys.stderr)
+        return 1
+    if not removed:
+        print(f"{email} has no Second factor: nothing was changed.", file=sys.stderr)
+        return 1
+    print(
+        f"Second factor of {email} removed: their password alone signs them in, and they can "
+        "turn it on again from their page."
+    )
     return 0
 
 

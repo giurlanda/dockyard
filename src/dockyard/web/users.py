@@ -23,6 +23,7 @@ from ..accounts import (
     User,
     normalise_email,
 )
+from ..local_sign_in import LocalSignIn, NotAUser
 from ..projects import Projects
 from ..runtime import Runtime
 from .guard import CurrentAdministrator
@@ -79,6 +80,7 @@ def users_routes(
     runtime: Runtime,
     pages: Pages,
     activation_links: ActivationLinks | None,  # None: Local sign-in is off
+    local_sign_in: LocalSignIn | None,  # None: Local sign-in is off
 ) -> APIRouter:
     router = APIRouter()
 
@@ -108,6 +110,27 @@ def users_routes(
             projects.stop_privileged(changed)
         return changed
 
+    def remove_second_factor(request: Request, by: User, email: str) -> Response | None:
+        """None once removed, else why not. An Administrator's own goes as anyone's does: by a
+        code or the password, from their own page, which someone at their unlocked device has
+        not.
+
+        Raises HTTPException 404 when Local sign-in is off, there is no such User, or they have
+        no Second factor.
+        """
+        if local_sign_in is None:
+            raise HTTPException(404)
+        if normalise_email(email) == by.email:
+            error = "own_second_factor"
+            return pages.problem(request, error, key=error, status_code=403)
+        try:
+            removed = local_sign_in.remove_second_factor(email)
+        except NotAUser:
+            removed = False
+        if not removed:
+            raise HTTPException(404)
+        return None
+
     def refused(request: Request, refusal: InvitationRefused) -> Response:
         return pages.problem(
             request,
@@ -127,6 +150,7 @@ def users_routes(
         email: str = "",
         problem: str | None = None,
         made: tuple[str, str] | None = None,  # the email and the Activation link just made
+        second_factor_removed: str | None = None,  # the email whose Second factor was removed
         status_code: int = 200,
     ) -> HTMLResponse:
         return pages.render(
@@ -139,7 +163,9 @@ def users_routes(
             email=email,
             problem=problem,
             activation_links=activation_links is not None,
+            protections=local_sign_in.protections() if local_sign_in else None,
             made=made,
+            second_factor_removed=second_factor_removed,
         )
 
     def made_page(request: Request, user: User, email: str, link: str) -> HTMLResponse:
@@ -213,6 +239,12 @@ def users_routes(
             raise HTTPException(404)
         return ActivationLinkOut(activation_link=link)
 
+    @router.delete("/api/users/{email}/second-factor", status_code=204)
+    def remove_users_second_factor(
+        request: Request, user: CurrentAdministrator, email: str
+    ) -> Response:
+        return remove_second_factor(request, user, email) or Response(status_code=204)
+
     @router.get("/api/invitations")
     def list_invitations(_: CurrentAdministrator) -> list[InvitationOut]:
         return [InvitationOut.of(invitation) for invitation in accounts.invitations()]
@@ -278,6 +310,14 @@ def users_routes(
         if link is None:
             raise HTTPException(404)
         return made_page(request, user, normalise_email(email), link)
+
+    @router.post("/users/{email}/second-factor/remove", response_model=None)
+    def remove_second_factor_from_page(
+        request: Request, user: CurrentAdministrator, email: str
+    ) -> Response:
+        return remove_second_factor(request, user, email) or users_page(
+            request, user, second_factor_removed=normalise_email(email)
+        )
 
     @router.post("/invitations/{email}/revoke", response_model=None)
     def revoke_from_page(_: CurrentAdministrator, email: str) -> Response:
