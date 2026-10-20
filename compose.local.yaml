@@ -1,6 +1,6 @@
 # Adds Local sign-in: Dockyard's own sign-in page, over HTTPS, published on one host IPv4 address
-# on the LAN or VPN. Use it with compose.yaml:
-#   docker compose -f compose.yaml -f compose.local.yaml up -d
+# on the LAN or VPN. Use it with compose.yaml, from .env:
+#   COMPOSE_FILE=compose.yaml:compose.local.yaml
 # Dockyard accepts Local sign-in only from the Local networks, never from Docker's own networks,
 # and never through the tunnel (docs/adr/0004-local-sign-in-on-its-own-listener.md).
 services:

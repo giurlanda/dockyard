@@ -1,6 +1,8 @@
 # Dockyard. Copy .env.example to .env, fill it in, then: docker compose up -d
 # Update: docker compose pull && docker compose up -d
-# The README covers the whole installation (Cloudflare Tunnel and Access, host firewall).
+# The README covers the whole installation (Cloudflare, Local sign-in, host firewall). .env picks
+# the ways in: COMPOSE_PROFILES=cloudflare runs the tunnel, and COMPOSE_FILE adds
+# compose.local.yaml for Local sign-in.
 name: dockyard
 
 # The Base Image: Dockyard runs it, and the base-image service below pulls it.
@@ -50,13 +52,17 @@ services:
     depends_on: [socket-proxy]
 
   # The tunnel client: it connects out to Cloudflare, which sends the requests that passed
-  # Cloudflare Access to http://dockyard:8000. Nothing on the host listens for them.
+  # Cloudflare Access to http://dockyard:8000. Nothing on the host listens for them. It runs only
+  # with the cloudflare profile (COMPOSE_PROFILES=cloudflare in .env).
   tunnel:
     image: cloudflare/cloudflared:2026.9.1
+    profiles: [cloudflare]
     restart: unless-stopped
     command: tunnel --no-autoupdate run
     environment:
-      TUNNEL_TOKEN: ${DOCKYARD_CF_TUNNEL_TOKEN:?Set DOCKYARD_CF_TUNNEL_TOKEN in .env (see the README)}
+      # docker compose reads the settings of every service, also of those whose profile is off:
+      # the token is required only when a profile is on, and cloudflare is the only one.
+      TUNNEL_TOKEN: ${DOCKYARD_CF_TUNNEL_TOKEN:-${COMPOSE_PROFILES:+${DOCKYARD_CF_TUNNEL_TOKEN:?Set DOCKYARD_CF_TUNNEL_TOKEN in .env (see the README), or take cloudflare out of COMPOSE_PROFILES}}}
     networks: [default]
     depends_on: [dockyard]
 
