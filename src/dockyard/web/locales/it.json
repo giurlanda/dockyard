@@ -362,7 +362,7 @@
   "own_page.second_factor.change_locally": "Per attivarlo o disattivarlo, apri questa pagina dall'indirizzo locale.",
   "own_page.second_factor.turn_on": "Attiva il Secondo fattore",
   "own_page.second_factor.new_recovery_codes": "Nuovi codici di recupero",
-  "own_page.second_factor.new_recovery_codes_hint": "I codici di recupero che hai smettono di funzionare.",
+  "own_page.second_factor.new_recovery_codes_hint": "I nuovi codici di recupero annullano quelli che hai.",
   "own_page.second_factor.code_or_password": "Codice della tua app di autenticazione, o la tua password",
   "own_page.second_factor.turn_off": "Disattiva il Secondo fattore",
   "own_page.second_factor.wrong": "Il codice o la password sono sbagliati.",
@@ -385,5 +385,7 @@
   "local_sign_in.code.code": "Codice",
   "local_sign_in.code.hint": "Oppure uno dei tuoi codici di recupero, se non hai l'app a portata di mano.",
   "local_sign_in.code.refused": "Il codice è sbagliato.",
-  "local_sign_in.code.over": "Il tempo per inserire il codice è scaduto, o il codice era già stato inserito. Accedi di nuovo."
+  "local_sign_in.code.over": "Il tempo per inserire il codice è scaduto, o il codice era già stato inserito. Accedi di nuovo.",
+  "own_page.second_factor.password": "La tua password",
+  "own_page.second_factor.wrong_password": "La password è sbagliata."
 }

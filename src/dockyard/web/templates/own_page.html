@@ -64,23 +64,29 @@
     {% if not local_sign_in %}
     <p>{{ t("own_page.second_factor.change_locally") }}</p>
     {% elif recovery_codes_left is none %}
-    <form method="post" action="/me/second-factor">
+    <form class="fields" method="post" action="/me/second-factor">
+      <input type="email" name="email" value="{{ user.email }}" autocomplete="username" hidden>
+      <div class="field">
+        <label for="second-factor-password">{{ t("own_page.second_factor.password") }}</label>
+        <input id="second-factor-password" name="password" type="password"
+               autocomplete="current-password" required>
+      </div>
       <div class="actions"><button class="primary">{{ t("own_page.second_factor.turn_on") }}</button></div>
     </form>
     {% else %}
-    <form method="post" action="/me/second-factor/recovery-codes">
-      <div class="actions"><button aria-describedby="new-codes-hint">
-        {{- t("own_page.second_factor.new_recovery_codes") }}</button></div>
-      <p class="hint muted" id="new-codes-hint">{{ t("own_page.second_factor.new_recovery_codes_hint") }}</p>
-    </form>
     <form class="fields" method="post" action="/me/second-factor/off">
       <input type="email" name="email" value="{{ user.email }}" autocomplete="username" hidden>
       <div class="field">
         <label for="code-or-password">{{ t("own_page.second_factor.code_or_password") }}</label>
         <input id="code-or-password" name="code_or_password" type="password"
-               autocomplete="current-password" required>
+               autocomplete="current-password" aria-describedby="new-codes-hint" required>
+        <p class="hint muted" id="new-codes-hint">{{ t("own_page.second_factor.new_recovery_codes_hint") }}</p>
       </div>
-      <div class="actions"><button class="danger">{{ t("own_page.second_factor.turn_off") }}</button></div>
+      <div class="actions">
+        <button formaction="/me/second-factor/recovery-codes">
+          {{- t("own_page.second_factor.new_recovery_codes") }}</button>
+        <button class="danger">{{ t("own_page.second_factor.turn_off") }}</button>
+      </div>
     </form>
     {% endif %}
   </section>

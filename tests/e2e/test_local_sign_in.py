@@ -268,7 +268,8 @@ def test_a_user_turns_on_the_second_factor_and_signs_in_again_with_a_code_on_a_p
         page.get_by_role("button", name=language).click()
         expect(page.get_by_role("button", name=language)).to_have_attribute("aria-pressed", "true")
         page.get_by_test_id("user-email").click()
-        page.locator("form[action='/me/second-factor'] button").click()
+        page.locator("#second-factor-password").fill(PASSWORD)
+        page.locator("#second-factor-password").press("Enter")
 
         expect(page.locator(".qr-code svg")).to_be_visible()
         assert fits_the_screen(page)

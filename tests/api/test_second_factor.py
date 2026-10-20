@@ -79,9 +79,19 @@ def recovery_codes_on(page: str) -> list[str]:
 
 def start_turning_on(local: TestClient) -> str:
     """The secret the enrolment page shows."""
-    page = local.post("/me/second-factor")
+    page = turn_on_with(local, PASSWORD)
     assert page.status_code == 200, page.text
     return secret_on(page.text)
+
+
+def turn_on_with(local: TestClient, password: str) -> Any:
+    return local.post("/me/second-factor", data={"password": password})
+
+
+def new_recovery_codes(local: TestClient, code_or_password: str) -> Any:
+    return local.post(
+        "/me/second-factor/recovery-codes", data={"code_or_password": code_or_password}
+    )
 
 
 def confirm(local: TestClient, code: str) -> Any:
@@ -110,7 +120,7 @@ def sign_in_again(local: TestClient, password: str = PASSWORD, **form: str) -> A
 def test_turning_it_on_shows_a_qr_code_and_the_secret_and_takes_effect_after_a_correct_code(
     local: TestClient, clock: FakeClock
 ) -> None:
-    page = local.post("/me/second-factor")
+    page = turn_on_with(local, PASSWORD)
 
     assert page.status_code == 200
     assert "<svg" in page.text
@@ -274,7 +284,7 @@ def test_a_recovery_code_stands_in_for_the_app_once(local: TestClient, clock: Fa
 def test_new_recovery_codes_void_the_old_ones(local: TestClient, clock: FakeClock) -> None:
     _, old = turn_on(local, clock)
 
-    made = local.post("/me/second-factor/recovery-codes")
+    made = new_recovery_codes(local, PASSWORD)
 
     assert made.status_code == 200
     assert made.headers["cache-control"] == "no-store"
@@ -284,6 +294,38 @@ def test_new_recovery_codes_void_the_old_ones(local: TestClient, clock: FakeCloc
     sign_in_again(local)
     assert give_code(local, old[2]).status_code == 401
     assert give_code(local, new[2]).url.path == "/"
+
+
+def test_new_recovery_codes_need_a_current_code_or_the_password(
+    local: TestClient, clock: FakeClock
+) -> None:
+    secret, old = turn_on(local, clock)
+
+    refused = new_recovery_codes(local, "a wrong password, long enough")
+
+    assert refused.status_code == 403
+    assert "The code or the password is wrong." in refused.text
+    assert not recovery_codes_on(refused.text)
+    made = new_recovery_codes(local, authenticator_code(secret, clock.now()))
+    assert len(recovery_codes_on(made.text)) == 10
+    sign_in_again(local)
+    assert give_code(local, old[0]).status_code == 401
+
+
+def test_turning_it_on_needs_the_password(local: TestClient, clock: FakeClock) -> None:
+    for _ in range(5):
+        refused = turn_on_with(local, "a wrong password, long enough")
+        assert refused.status_code == 403
+        assert "The password is wrong." in refused.text
+        assert "second-factor-secret" not in refused.text
+
+    slowed_down = turn_on_with(local, PASSWORD)
+
+    assert slowed_down.status_code == 429
+    assert "Too many failed attempts. Try again in 30 s." in slowed_down.text
+    assert local.get("/me/second-factor").url.path == "/me"  # nothing waits for a code
+    clock.advance(seconds=30)
+    assert "second-factor-secret" in turn_on_with(local, PASSWORD).text
 
 
 def test_wrong_codes_slow_down_like_wrong_passwords(
@@ -403,7 +445,7 @@ def test_the_second_factor_speaks_italian(local: TestClient, clock: FakeClock) -
     local.headers["Accept-Language"] = "it"
     assert "Non hai un Secondo fattore" in local.get("/me").text
 
-    enrolment = local.post("/me/second-factor")
+    enrolment = turn_on_with(local, PASSWORD)
     assert "app di autenticazione" in enrolment.text
     secret = secret_on(enrolment.text)
     confirmed = confirm(local, authenticator_code(secret, clock.now()))

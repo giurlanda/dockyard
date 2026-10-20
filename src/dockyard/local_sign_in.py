@@ -511,24 +511,33 @@ class LocalSignIn:
             ).fetchone()
         return row["left_"] if row and row["on_"] else None
 
-    def start_second_factor(self, email: str) -> str:
-        """A new secret for the User's authenticator app, as the app takes it typed (base32). It
-        waits for a code that confirms it, replacing any that waited.
+    def start_second_factor(self, email: str, password: str, *, client: str) -> str:
+        """The User, by giving their password, gets a new secret for their authenticator app, as
+        the app takes it typed (base32). It waits for a code that confirms it, replacing any
+        that waited. A wrong password is a failed sign-in: someone at the User's unlocked device
+        cannot lock them out with an app of their own.
 
-        Raises HasSecondFactor, NotAUser.
+        Raises SignInRefused, SlowedDown, HasSecondFactor.
         """
         email = normalise_email(email)
+        if self.has_second_factor(email):
+            raise HasSecondFactor
         secret = secrets.token_bytes(20)  # 160 bits, as RFC 4226 recommends for SHA-1
-        with self._db.transaction() as conn:
-            changed = conn.execute(
-                "UPDATE users SET pending_second_factor = ?"
-                " WHERE email = ? AND second_factor IS NULL",
-                (self._fernet.encrypt(secret), email),
-            ).rowcount
-            if not changed:
-                if conn.execute("SELECT 1 FROM users WHERE email = ?", (email,)).fetchone():
-                    raise HasSecondFactor
-                raise NotAUser
+
+        def checked(now: datetime) -> bool | None:
+            stored = self._stored_password(email)
+            if stored is None or not _password_matches(password, stored):
+                return None
+            with self._db.transaction() as conn:
+                if not conn.execute(
+                    "UPDATE users SET pending_second_factor = ?"
+                    " WHERE email = ? AND second_factor IS NULL",
+                    (self._fernet.encrypt(secret), email),
+                ).rowcount:
+                    raise HasSecondFactor  # turned on meanwhile
+            return True
+
+        self._attempt(email, client, "Turning on the Second factor", checked)
         return _base32(secret)
 
     def pending_second_factor(self, email: str) -> str | None:
@@ -570,22 +579,37 @@ class LocalSignIn:
                 raise NothingToConfirm
             return _new_recovery_codes(conn, email)
 
-    def new_recovery_codes(self, email: str) -> list[str]:
-        """New recovery codes for the User, to show once; the old ones no longer work.
+    def new_recovery_codes(self, email: str, code_or_password: str, *, client: str) -> list[str]:
+        """The User, by giving a code from the authenticator app or their password, gets new
+        recovery codes, to show once; the old ones no longer work. A wrong one is a failed
+        sign-in.
 
-        Raises NoSecondFactor.
+        Raises SignInRefused, SlowedDown, NoSecondFactor.
         """
-        email = normalise_email(email)
-        with self._db.transaction() as conn:
-            if not conn.execute(
-                "SELECT 1 FROM users WHERE email = ? AND second_factor IS NOT NULL", (email,)
-            ).fetchone():
-                raise NoSecondFactor
-            return _new_recovery_codes(conn, email)
+        return self._with_code_or_password(
+            email, code_or_password, client, "New recovery codes", _new_recovery_codes
+        )
 
     def turn_off_second_factor(self, email: str, code_or_password: str, *, client: str) -> None:
         """The User turns their Second factor off by giving a code from the authenticator app or
         their password. A wrong one is a failed sign-in.
+
+        Raises SignInRefused, SlowedDown, NoSecondFactor.
+        """
+        self._with_code_or_password(
+            email, code_or_password, client, "Turning off the Second factor", _remove_second_factor
+        )
+
+    def _with_code_or_password(
+        self,
+        email: str,
+        code_or_password: str,
+        client: str,
+        what: str,
+        change: Callable[[sqlite3.Connection, str], T],
+    ) -> T:
+        """What `change` makes of the User's Second factor, once they gave a code from the
+        authenticator app or their password: what someone at their unlocked device has not.
 
         Raises SignInRefused, SlowedDown, NoSecondFactor.
         """
@@ -594,7 +618,8 @@ class LocalSignIn:
             raise NoSecondFactor
         given = "".join(code_or_password.split())
 
-        def checked(now: datetime) -> bool | None:
+        # In a tuple: what `change` makes may be None, which _attempt takes for a failure.
+        def checked(now: datetime) -> tuple[T] | None:
             if _is_authenticator_code(given):
                 with self._db.transaction() as conn:
                     right = self._authenticator_code_accepted(conn, email, given, now)
@@ -604,10 +629,14 @@ class LocalSignIn:
             if not right:
                 return None
             with self._db.transaction() as conn:
-                _remove_second_factor(conn, email)
-            return True
+                if not conn.execute(
+                    "SELECT 1 FROM users WHERE email = ? AND second_factor IS NOT NULL", (email,)
+                ).fetchone():
+                    raise NoSecondFactor  # turned off meanwhile
+                return (change(conn, email),)
 
-        self._attempt(email, client, "Turning off the Second factor", checked)
+        (changed,) = self._attempt(email, client, what, checked)
+        return changed
 
     def _code_accepted(
         self, conn: sqlite3.Connection, email: str, code: str, now: datetime

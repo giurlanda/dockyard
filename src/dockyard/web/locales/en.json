@@ -362,7 +362,7 @@
   "own_page.second_factor.change_locally": "To turn it on or off, open this page on the local address.",
   "own_page.second_factor.turn_on": "Turn on the Second factor",
   "own_page.second_factor.new_recovery_codes": "New recovery codes",
-  "own_page.second_factor.new_recovery_codes_hint": "The recovery codes you have stop working.",
+  "own_page.second_factor.new_recovery_codes_hint": "New recovery codes void the ones you have.",
   "own_page.second_factor.code_or_password": "Code from your authenticator app, or your password",
   "own_page.second_factor.turn_off": "Turn off the Second factor",
   "own_page.second_factor.wrong": "The code or the password is wrong.",
@@ -385,5 +385,7 @@
   "local_sign_in.code.code": "Code",
   "local_sign_in.code.hint": "Or one of your recovery codes, if you do not have the app at hand.",
   "local_sign_in.code.refused": "The code is wrong.",
-  "local_sign_in.code.over": "The time to enter the code ran out, or the code was already given. Sign in again."
+  "local_sign_in.code.over": "The time to enter the code ran out, or the code was already given. Sign in again.",
+  "own_page.second_factor.password": "Your password",
+  "own_page.second_factor.wrong_password": "The password is wrong."
 }

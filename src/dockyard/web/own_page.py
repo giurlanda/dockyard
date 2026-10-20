@@ -151,14 +151,26 @@ def _second_factor_routes(
         )
         return _not_kept(page)
 
+    def refused(request: Request, user: User, refusal: SignInRefused, wrong: str) -> HTMLResponse:
+        """The User's page, telling why what they asked of their Second factor was refused."""
+        if isinstance(refusal, SlowedDown):
+            retry_in = seconds_to_wait(refusal)
+            return own_page(
+                request, user, about="second_factor", retry_in=retry_in, status_code=429
+            )
+        problem = f"own_page.second_factor.{wrong}"
+        return own_page(request, user, about="second_factor", problem=problem, status_code=403)
+
     @router.post(SECOND_FACTOR, response_model=None)
-    def start(user: CurrentUser) -> Response:
+    def start(
+        request: Request, user: CurrentUser, password: Annotated[str, Form()] = ""
+    ) -> Response:
         try:
-            local_sign_in.start_second_factor(user.email)
+            local_sign_in.start_second_factor(user.email, password, client=_client(request))
+        except SignInRefused as refusal:
+            return refused(request, user, refusal, "wrong_password")
         except HasSecondFactor:
             return _back()
-        except NotAUser:  # removed meanwhile
-            raise HTTPException(404) from None
         return RedirectResponse(SECOND_FACTOR, status_code=303)
 
     @router.get(SECOND_FACTOR, response_model=None)
@@ -180,9 +192,17 @@ def _second_factor_routes(
         return recovery_codes_page(request, user, codes, turned_on=True)
 
     @router.post(SECOND_FACTOR + "/recovery-codes", response_model=None)
-    def new_recovery_codes(request: Request, user: CurrentUser) -> Response:
+    def new_recovery_codes(
+        request: Request,
+        user: CurrentUser,
+        code_or_password: Annotated[str, Form()] = "",
+    ) -> Response:
         try:
-            codes = local_sign_in.new_recovery_codes(user.email)
+            codes = local_sign_in.new_recovery_codes(
+                user.email, code_or_password, client=_client(request)
+            )
+        except SignInRefused as refusal:
+            return refused(request, user, refusal, "wrong")
         except NoSecondFactor:
             return _back()
         return recovery_codes_page(request, user, codes, turned_on=False)
@@ -197,14 +217,8 @@ def _second_factor_routes(
             local_sign_in.turn_off_second_factor(
                 user.email, code_or_password, client=_client(request)
             )
-        except SlowedDown as slowed_down:
-            retry_in = seconds_to_wait(slowed_down)
-            return own_page(
-                request, user, about="second_factor", retry_in=retry_in, status_code=429
-            )
-        except SignInRefused:
-            problem = "own_page.second_factor.wrong"
-            return own_page(request, user, about="second_factor", problem=problem, status_code=403)
+        except SignInRefused as refusal:
+            return refused(request, user, refusal, "wrong")
         except NoSecondFactor:
             return _back()
         return RedirectResponse(f"{OWN_PAGE}?saved=second_factor_off", status_code=303)
