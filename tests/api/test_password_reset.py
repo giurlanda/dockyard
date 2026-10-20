@@ -18,6 +18,7 @@ from .test_activation_links import (
     path_of,
 )
 from .test_local_sign_in import LOCAL_SIGN_IN, ON_THE_LAN, PASSWORD, sign_in
+from .test_second_factor import authenticator_code, give_code, turn_on
 
 USER = "forgetful.user@example.com"
 NEW_PASSWORD = "a password I will remember"
@@ -85,6 +86,23 @@ def test_resetting_signs_the_user_out_everywhere_else(
 
     assert elsewhere.get("/api/me").status_code == 401
     assert local.get("/api/me").json()["email"] == USER
+
+
+def test_resetting_leaves_the_second_factor_in_place(
+    tunnel: TestClient, local: TestClient, proxy: AccessProxy, clock: FakeClock, user: str
+) -> None:
+    sign_in(local, USER, PASSWORD)
+    secret, _ = turn_on(local, clock)
+    local.post("/sign-out")
+
+    reset = activate(local, a_link_to_reset(tunnel, proxy), NEW_PASSWORD)
+
+    assert reset.url.path == "/sign-in/code"  # the link alone does not sign in
+    assert local.get("/api/me").status_code == 401
+    assert give_code(local, authenticator_code(secret, clock.now())).url.path == "/"
+    assert "You have a Second factor" in local.get("/me").text
+    local.post("/sign-out")
+    assert sign_in(local, USER, NEW_PASSWORD).url.path == "/sign-in/code"
 
 
 def test_a_link_to_reset_works_once(

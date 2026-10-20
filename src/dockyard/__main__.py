@@ -114,7 +114,7 @@ def _set_password(settings: Settings, email: str) -> int:
     database.migrate()
     # As at every start: the first Administrator is a User even before Dockyard first started.
     Accounts(database).bootstrap_first_administrator(settings.first_administrator_email)
-    local_sign_in = LocalSignIn(database, SystemClock())
+    local_sign_in = LocalSignIn(database, settings.secret_key, SystemClock())
 
     password = _ask("New password: ")
     if _ask("The same password again: ") != password:

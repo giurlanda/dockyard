@@ -156,6 +156,28 @@ MIGRATIONS = (
         expires_at TEXT NOT NULL
     );
     """,
+    # The Second factor. second_factor: the authenticator app's secret, encrypted with the
+    # Instance secret key, NULL while it is off; a new one waits in pending_second_factor until a
+    # code from the app confirms it. second_factor_step: the latest time step a code was accepted
+    # for, so that no code works twice. Recovery codes and code steps (the sign-in between the
+    # password and the code) are known by their hash alone, and end with their User.
+    """
+    ALTER TABLE users ADD COLUMN second_factor BLOB;
+    ALTER TABLE users ADD COLUMN pending_second_factor BLOB;
+    ALTER TABLE users ADD COLUMN second_factor_step INTEGER;
+    CREATE TABLE recovery_codes (
+        email     TEXT NOT NULL REFERENCES users (email) ON DELETE CASCADE,
+        code_hash TEXT NOT NULL,
+        used      INTEGER NOT NULL DEFAULT 0 CHECK (used IN (0, 1)),
+        PRIMARY KEY (email, code_hash)
+    );
+    CREATE TABLE code_steps (
+        token_hash TEXT PRIMARY KEY,
+        email      TEXT NOT NULL REFERENCES users (email) ON DELETE CASCADE,
+        expires_at TEXT NOT NULL
+    );
+    CREATE INDEX code_steps_email ON code_steps (email);
+    """,
 )
 
 

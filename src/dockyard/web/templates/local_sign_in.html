@@ -8,6 +8,7 @@
     <h1 id="sign-in">{{ t("local_sign_in.title") }}</h1>
     <p class="muted">{{ t("local_sign_in.explain") }}</p>
     {% if wrong %}<p class="warning" role="alert">{{ t("local_sign_in.refused") }}</p>{% endif %}
+    {% if code_step_over %}<p class="warning" role="alert">{{ t("local_sign_in.code.over") }}</p>{% endif %}
     {% include "_slowed_down.html" %}
     <form class="fields" method="post" action="/sign-in">
       <input type="hidden" name="next" value="{{ next }}">

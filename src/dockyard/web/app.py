@@ -47,7 +47,14 @@ from .guard import (
 )
 from .i18n import LANGUAGE_COOKIE, Language
 from .images import images_routes
-from .local_sign_in import ACTIVATE, SIGN_IN, SIGN_OUT, ActivationLinks, local_sign_in_routes
+from .local_sign_in import (
+    ACTIVATE,
+    CODE_STEP,
+    SIGN_IN,
+    SIGN_OUT,
+    ActivationLinks,
+    local_sign_in_routes,
+)
 from .own_page import own_page_routes
 from .pages import Pages, same_site_path
 from .projects import projects_routes
@@ -105,7 +112,7 @@ def create_instance(
     database = Database(settings.data_dir / "dockyard.db")
     database.migrate()
     accounts = Accounts(database)
-    local_sign_in = LocalSignIn(database, clock)
+    local_sign_in = LocalSignIn(database, settings.secret_key, clock)
     accounts.bootstrap_first_administrator(settings.first_administrator_email)
     git_credentials = GitCredentials(database, settings.secret_key)
     projects = Projects(database, runtime, git_credentials, limits=settings.limits)
@@ -214,7 +221,9 @@ def _listener_app(
         accounts=accounts,
         refuse=pages.refusal,
         clients=clients,
-        sign_in=SignInPage(SIGN_IN, public=(SIGN_IN, SIGN_OUT, ACTIVATE, "/language", "/static/"))
+        sign_in=SignInPage(
+            SIGN_IN, public=(SIGN_IN, CODE_STEP, SIGN_OUT, ACTIVATE, "/language", "/static/")
+        )
         if local_sign_in
         else None,
     )

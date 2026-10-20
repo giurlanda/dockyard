@@ -13,11 +13,13 @@
   {% if passwords %}
   <section class="panel" aria-labelledby="password-heading">
     <h2 id="password-heading">{{ t("own_page.password.heading") }}</h2>
-    {% if saved %}<p class="outcome good" role="status">{{ t("own_page.password.saved") }}</p>{% endif %}
+    {% if saved == "password" %}<p class="outcome good" role="status">{{ t("own_page.password.saved") }}</p>{% endif %}
     <p {% if not has_password %}class="muted"{% endif %}>
       {{ t("own_page.password.set" if has_password else "own_page.password.none") }}</p>
+    {% if about == "password" %}
     {% if problem %}<p class="warning" role="alert">{{ t(problem) }}</p>{% endif %}
     {% include "_slowed_down.html" %}
+    {% endif %}
     {% if has_password and not local_sign_in %}
     <p>{{ t("own_page.password.change_locally") }}</p>
     {% else %}
@@ -42,6 +44,43 @@
       </div>
       <div class="actions"><button class="primary">
         {{ t("own_page.password.change" if has_password else "own_page.password.choose") }}</button></div>
+    </form>
+    {% endif %}
+  </section>
+  <section class="panel" aria-labelledby="second-factor-heading">
+    <h2 id="second-factor-heading">{{ t("own_page.second_factor.heading") }}</h2>
+    {% if saved == "second_factor_off" %}<p class="outcome good" role="status">
+      {{- t("own_page.second_factor.turned_off") }}</p>{% endif %}
+    {% if recovery_codes_left is none %}
+    <p class="muted">{{ t("own_page.second_factor.off") }}</p>
+    {% else %}
+    <p>{{ t("own_page.second_factor.on") }}</p>
+    <p class="muted">{{ t("own_page.second_factor.recovery_codes_left", count=recovery_codes_left) }}</p>
+    {% endif %}
+    {% if about == "second_factor" %}
+    {% if problem %}<p class="warning" role="alert">{{ t(problem) }}</p>{% endif %}
+    {% include "_slowed_down.html" %}
+    {% endif %}
+    {% if not local_sign_in %}
+    <p>{{ t("own_page.second_factor.change_locally") }}</p>
+    {% elif recovery_codes_left is none %}
+    <form method="post" action="/me/second-factor">
+      <div class="actions"><button class="primary">{{ t("own_page.second_factor.turn_on") }}</button></div>
+    </form>
+    {% else %}
+    <form method="post" action="/me/second-factor/recovery-codes">
+      <div class="actions"><button aria-describedby="new-codes-hint">
+        {{- t("own_page.second_factor.new_recovery_codes") }}</button></div>
+      <p class="hint muted" id="new-codes-hint">{{ t("own_page.second_factor.new_recovery_codes_hint") }}</p>
+    </form>
+    <form class="fields" method="post" action="/me/second-factor/off">
+      <input type="email" name="email" value="{{ user.email }}" autocomplete="username" hidden>
+      <div class="field">
+        <label for="code-or-password">{{ t("own_page.second_factor.code_or_password") }}</label>
+        <input id="code-or-password" name="code_or_password" type="password"
+               autocomplete="current-password" required>
+      </div>
+      <div class="actions"><button class="danger">{{ t("own_page.second_factor.turn_off") }}</button></div>
     </form>
     {% endif %}
   </section>

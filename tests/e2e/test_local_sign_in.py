@@ -17,6 +17,7 @@ from dockyard.serving import Servers
 from dockyard.settings import Settings
 from dockyard.web import create_instance
 
+from ..api.test_second_factor import authenticator_code
 from .conftest import ADMINISTRATOR, PHONE, fits_the_screen, free_port
 
 PASSWORD = "correct horse battery staple"
@@ -246,6 +247,49 @@ def test_a_user_changes_their_password_from_their_page_on_a_phone(
         page.locator("#repeated").press("Enter")
         expect(page.get_by_role("status")).to_contain_text(saved)
         expect(page.locator("#current")).to_be_visible()
+        assert fits_the_screen(page)
+    finally:
+        context.close()
+
+
+@pytest.mark.parametrize("language", ["English", "Italiano"])
+def test_a_user_turns_on_the_second_factor_and_signs_in_again_with_a_code_on_a_phone(
+    browser: Browser, local_url: str, language: str
+) -> None:
+    context = browser.new_context(
+        base_url=local_url,
+        ignore_https_errors=True,
+        locale="en-US",
+        viewport=PHONE,  # type: ignore[arg-type]
+    )
+    page = context.new_page()
+    try:
+        sign_in(page, ADMINISTRATOR, PASSWORD)
+        page.get_by_role("button", name=language).click()
+        expect(page.get_by_role("button", name=language)).to_have_attribute("aria-pressed", "true")
+        page.get_by_test_id("user-email").click()
+        page.locator("form[action='/me/second-factor'] button").click()
+
+        expect(page.locator(".qr-code svg")).to_be_visible()
+        assert fits_the_screen(page)
+        secret = page.locator("#second-factor-secret").inner_text()
+        page.locator("#code").fill(authenticator_code(secret, time.time()))
+        page.locator("#code").press("Enter")
+        expect(page.locator(".recovery-code")).to_have_count(10)
+        assert fits_the_screen(page)
+
+        page.locator("form[action='/sign-out'] button").click()
+        page.locator("#email").fill(ADMINISTRATOR)
+        page.locator("#password").fill(PASSWORD)
+        page.locator("#password").press("Enter")
+        expect(page.locator("#code")).to_be_visible()
+        assert fits_the_screen(page)
+        # The next step's code: the one that confirmed the Second factor works no more.
+        page.locator("#code").fill(authenticator_code(secret, time.time() + 30))
+        page.locator("#code").press("Enter")
+        expect(page.get_by_test_id("user-email")).to_have_text(ADMINISTRATOR)
+        page.get_by_test_id("user-email").click()
+        expect(page.locator("form[action='/me/second-factor/off']")).to_be_visible()
         assert fits_the_screen(page)
     finally:
         context.close()

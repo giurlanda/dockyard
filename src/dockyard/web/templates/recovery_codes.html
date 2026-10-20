@@ -1,0 +1,14 @@
+{% extends "base.html" %}
+{% block title %}{{ t("recovery_codes.title") }}{% endblock %}
+{% block header %}{% include "_user.html" %}{% endblock %}
+{% block content %}
+  <section class="panel" aria-labelledby="recovery-codes">
+    <h1 id="recovery-codes">{{ t("recovery_codes.title") }}</h1>
+    {% if turned_on %}<p class="outcome good" role="status">{{ t("recovery_codes.turned_on") }}</p>{% endif %}
+    <p>{{ t("recovery_codes.explain") }}</p>
+    <ul class="recovery-codes">
+      {% for code in codes %}<li class="recovery-code"><code>{{ code }}</code></li>{% endfor %}
+    </ul>
+    <div class="actions"><a href="/me">{{ t("recovery_codes.done") }}</a></div>
+  </section>
+{% endblock %}

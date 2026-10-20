@@ -1,0 +1,25 @@
+{% extends "base.html" %}
+{% block title %}{{ t("second_factor.title") }}{% endblock %}
+{% block header %}{% include "_user.html" %}{% endblock %}
+{% block content %}
+  <section class="panel" aria-labelledby="second-factor">
+    <h1 id="second-factor">{{ t("second_factor.title") }}</h1>
+    <p>{{ t("second_factor.scan") }}</p>
+    <div class="qr-code" role="img" aria-label="{{ t('second_factor.qr_code') }}">{{ qr_code }}</div>
+    <p>{{ t("second_factor.type") }}</p>
+    <p><code id="second-factor-secret" class="secret">{{ secret }}</code></p>
+    {% if wrong %}<p class="warning" role="alert">{{ t("second_factor.refused") }}</p>{% endif %}
+    <form class="fields" method="post" action="/me/second-factor/confirm">
+      <div class="field">
+        <label for="code">{{ t("second_factor.code") }}</label>
+        <input id="code" name="code" inputmode="numeric" autocomplete="one-time-code"
+               aria-describedby="code-hint" required>
+        <p class="hint muted" id="code-hint">{{ t("second_factor.hint") }}</p>
+      </div>
+      <div class="actions">
+        <button class="primary">{{ t("second_factor.submit") }}</button>
+        <a href="/me">{{ t("second_factor.cancel") }}</a>
+      </div>
+    </form>
+  </section>
+{% endblock %}
