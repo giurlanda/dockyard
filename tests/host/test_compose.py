@@ -33,10 +33,13 @@ CLOUDFLARE = {
 }
 LOCAL_ONLY = {
     "COMPOSE_FILE": "compose.yaml:compose.local.yaml",
-    "COMPOSE_PROFILES": "",
     "DOCKYARD_LOCAL_ADDRESS": "192.168.1.10",
 }
-BOTH = {**CLOUDFLARE, **LOCAL_ONLY, "COMPOSE_PROFILES": "cloudflare"}
+BOTH = {
+    **CLOUDFLARE,
+    **LOCAL_ONLY,
+    "COMPOSE_FILE": "compose.yaml:compose.cloudflare.yaml:compose.local.yaml",
+}
 # As the README shows it: the local port on a Tailscale address too.
 VPN_OVERRIDE = """\
 services:
@@ -69,7 +72,7 @@ def test_a_fresh_env_with_cloudflare_filled_in_runs_the_tunnel_and_publishes_no_
     assert "DOCKYARD_LOCAL_PORT" not in found["dockyard"]["environment"]
 
 
-def test_with_the_cloudflare_profile_on_the_tunnel_token_is_required(tmp_path: Path) -> None:
+def test_with_cloudflare_on_the_tunnel_token_is_required(tmp_path: Path) -> None:
     directory = install(tmp_path, {**REQUIRED, **CLOUDFLARE, "DOCKYARD_CF_TUNNEL_TOKEN": ""})
 
     result = compose(directory, "config")

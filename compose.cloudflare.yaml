@@ -1,0 +1,14 @@
+# Adds the Cloudflare way in: the tunnel client. Use it with compose.yaml, from .env:
+#   COMPOSE_FILE=compose.yaml:compose.cloudflare.yaml
+# It connects out to Cloudflare, which sends the requests that passed Cloudflare Access to
+# http://dockyard:8000. Nothing on the host listens for them. The token is required here and
+# only here: an Instance without Cloudflare leaves this file out of COMPOSE_FILE.
+services:
+  tunnel:
+    image: cloudflare/cloudflared:2026.9.1
+    restart: unless-stopped
+    command: tunnel --no-autoupdate run
+    environment:
+      TUNNEL_TOKEN: ${DOCKYARD_CF_TUNNEL_TOKEN:?Set DOCKYARD_CF_TUNNEL_TOKEN in .env (see the README), or take compose.cloudflare.yaml out of COMPOSE_FILE}
+    networks: [default]
+    depends_on: [dockyard]

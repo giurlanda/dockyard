@@ -8,7 +8,7 @@ import subprocess
 from pathlib import Path
 
 REPO = Path(__file__).parents[2]
-COMPOSE_FILES = ("compose.yaml", "compose.local.yaml")
+COMPOSE_FILES = ("compose.yaml", "compose.cloudflare.yaml", "compose.local.yaml")
 
 
 def install(directory: Path, settings: dict[str, str]) -> Path:

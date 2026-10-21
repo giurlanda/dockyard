@@ -82,7 +82,6 @@ def dockyard(host_addresses: None, tmp_path_factory: pytest.TempPathFactory) -> 
         tmp_path_factory.mktemp("installation"),
         {
             "COMPOSE_FILE": "compose.yaml:compose.local.yaml",
-            "COMPOSE_PROFILES": "",
             "DOCKYARD_VERSION": VERSION,
             "DOCKYARD_SECRET_KEY": Fernet.generate_key().decode(),
             "DOCKYARD_FIRST_ADMINISTRATOR_EMAIL": "admin@example.com",

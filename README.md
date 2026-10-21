@@ -41,18 +41,18 @@ cp .env.example .env
 ```
 
 Dockyard runs from published images; the repository only gives you `compose.yaml`,
-`compose.local.yaml`, `.env.example` and the host firewall in `host/`. Keep it in `/opt/dockyard`:
-the firewall service reads its settings from `/opt/dockyard/.env`.
+`compose.cloudflare.yaml`, `compose.local.yaml`, `.env.example` and the host firewall in `host/`.
+Keep it in `/opt/dockyard`: the firewall service reads its settings from `/opt/dockyard/.env`.
 
 ### 2. Choose the ways in
 
-The first two lines of `.env` pick them: the compose files and profiles Docker uses.
+The `COMPOSE_FILE` line of `.env` picks them: the compose files Docker uses.
 
-| Installation | `COMPOSE_FILE` | `COMPOSE_PROFILES` | Steps |
-| --- | --- | --- | --- |
-| Cloudflare only (the default) | `compose.yaml` | `cloudflare` | 3, 4 |
-| Local sign-in only | `compose.yaml:compose.local.yaml` | *(empty)* | 5 |
-| Both | `compose.yaml:compose.local.yaml` | `cloudflare` | 3, 4, 5 |
+| Installation | `COMPOSE_FILE` | Steps |
+| --- | --- | --- |
+| Cloudflare only (the default) | `compose.yaml:compose.cloudflare.yaml` | 3, 4 |
+| Local sign-in only | `compose.yaml:compose.local.yaml` | 5 |
+| Both | `compose.yaml:compose.cloudflare.yaml:compose.local.yaml` | 3, 4, 5 |
 
 Follow the steps of your installation, then go on from step 6. Without Cloudflare, leave its three
 settings in `.env` empty; Dockyard refuses to start when neither way in is set up.
@@ -64,7 +64,7 @@ In the Cloudflare dashboard, open **Zero Trust → Networks → Tunnels**:
 1. **Create a tunnel**, type **Cloudflared**, and give it a name (e.g. `dockyard`).
 2. On the install page, copy the token: the long value after `--token` in any of the install
    commands. Put it in `.env` as `DOCKYARD_CF_TUNNEL_TOKEN`. Do not run the install command:
-   `compose.yaml` already runs the tunnel client.
+   `compose.cloudflare.yaml` already runs the tunnel client.
 3. Add a **public hostname** (a *published application route* in newer dashboards), e.g.
    `dockyard.example.com`, with service type **HTTP** and URL **`dockyard:8000`**.
 
@@ -107,8 +107,9 @@ services:
 ```
 
 and add it at the end of `COMPOSE_FILE` in `.env`:
-`COMPOSE_FILE=compose.yaml:compose.local.yaml:compose.override.yaml`. With `COMPOSE_FILE` set,
-Docker does not read `compose.override.yaml` on its own.
+`COMPOSE_FILE=compose.yaml:compose.local.yaml:compose.override.yaml` (with `compose.cloudflare.yaml`
+too, if you use Cloudflare). With `COMPOSE_FILE` set, Docker does not read `compose.override.yaml`
+on its own.
 
 ### 6. Fill in the rest of `.env`
 
@@ -223,11 +224,11 @@ from Docker's own networks, gets a refusal page that names nothing of the Instan
 no longer starts and Cloudflare stops working:
 
 ```sh
-COMPOSE_PROFILES=cloudflare
+COMPOSE_FILE=compose.yaml:compose.cloudflare.yaml
 ```
 
-Then run `git pull`, since this release changes `compose.yaml` and `.env.example`, and update as
-usual:
+Then run `git pull`, since this release changes `compose.yaml` and `.env.example` and adds
+`compose.cloudflare.yaml`, and update as usual:
 
 ```sh
 cd /opt/dockyard
@@ -241,7 +242,7 @@ Dockyard builds every Image of the Instance again, and each Project shows "updat
 moves to it at its next restart. Only the latest release gets this weekly rebuild: an Instance
 pinned to an older one with `DOCKYARD_VERSION` keeps the Claude Code it last pulled.
 
-When a release changes `compose.yaml`, `.env.example` or the host firewall, its notes say so: run
+When a release changes the compose files, `.env.example` or the host firewall, its notes say so: run
 `git pull` first, then reinstall the firewall as in step 8 if it changed.
 
 ## Backups

@@ -70,12 +70,14 @@ def test_a_stopped_project_has_no_terminal(runtime: Runtime, new_user: Callable[
 
 
 def test_ctrl_c_in_the_terminal_interrupts_what_the_shell_runs_never_the_server(
-    runtime: Runtime, new_user: Callable[[], str]
+    runtime: Runtime, new_user: Callable[[], str], terminal_processes: TerminalProcesses
 ) -> None:
     project = running(runtime, new_user())
     terminal = Screen(runtime.open_terminal(project))
     terminal.wait_for("$ ")
     terminal.type("sleep 600\r")
+    # Ctrl-C reaches sleep only once it runs: sent earlier, it cancels the line being typed.
+    assert wait_until(lambda: terminal_processes(runtime, project) == 2)
 
     terminal.type("\x03")
     terminal.wait_for("^C")
