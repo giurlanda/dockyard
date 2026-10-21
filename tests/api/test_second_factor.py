@@ -30,8 +30,8 @@ STEP = timedelta(seconds=30)
 
 def authenticator_code(secret: str, at: datetime | float) -> str:
     """The code an authenticator app shows at that time for the secret, as typed or scanned."""
-    key = secret.replace(" ", "").upper()
-    key = base64.b32decode(key + "=" * (-len(key) % 8))
+    typed = secret.replace(" ", "").upper()
+    key = base64.b32decode(typed + "=" * (-len(typed) % 8))
     seconds = at.timestamp() if isinstance(at, datetime) else at
     digest = hmac.new(key, struct.pack(">Q", int(seconds) // 30), hashlib.sha1).digest()
     offset = digest[-1] & 0x0F
