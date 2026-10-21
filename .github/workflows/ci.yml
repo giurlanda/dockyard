@@ -9,10 +9,10 @@ on:
 jobs:
   lint:
     name: Lint and typecheck
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v5
-      - uses: astral-sh/setup-uv@v6
+      - uses: astral-sh/setup-uv@v10.3.0
       - run: uv sync --locked
       - run: uv run ruff check
       - run: uv run ruff format --check
@@ -20,38 +20,38 @@ jobs:
 
   seam-a:
     name: "Seam A: HTTP API"
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v5
-      - uses: astral-sh/setup-uv@v6
+      - uses: astral-sh/setup-uv@v10.3.0
       - run: uv sync --locked
       - run: uv run pytest tests/api
 
   seam-b:
     name: "Seam B: Runtime contract (fake and Docker)"
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v5
-      - uses: astral-sh/setup-uv@v6
+      - uses: astral-sh/setup-uv@v10.3.0
       - run: uv sync --locked
       - run: uv run pytest tests/runtime
 
   seam-c:
     name: "Seam C: browser end to end"
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v5
-      - uses: astral-sh/setup-uv@v6
+      - uses: astral-sh/setup-uv@v10.3.0
       - run: uv sync --locked
       - run: uv run playwright install --with-deps chromium
       - run: uv run pytest tests/e2e
 
   host:
     name: "Host: firewall, compose and local port"
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v5
-      - uses: astral-sh/setup-uv@v6
+      - uses: astral-sh/setup-uv@v10.3.0
       - run: uv sync --locked
       # The tests change the runner's firewall, interfaces, network namespaces and systemd units:
       # root only.

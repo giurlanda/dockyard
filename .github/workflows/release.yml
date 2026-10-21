@@ -24,7 +24,7 @@ jobs:
 
   release:
     name: Pick the release and its images
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     outputs:
       tag: ${{ steps.release.outputs.tag }}
       latest: ${{ steps.release.outputs.latest }}
@@ -64,7 +64,7 @@ jobs:
     if: >-
       !cancelled() && needs.release.outputs.tag != ''
       && (needs.ci.result == 'success' || needs.ci.result == 'skipped')
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     permissions:
       contents: read
       packages: write
