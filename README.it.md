@@ -1,6 +1,18 @@
+<p align="center">
+  <img src="assets/detailed_icon_256.png" alt="Dockyard" width="256" height="256">
+</p>
+
 [English](README.md) · **Italiano**
 
 # Dockyard
+
+[![CI](https://github.com/giurlanda/dockyard/actions/workflows/ci.yml/badge.svg)](https://github.com/giurlanda/dockyard/actions/workflows/ci.yml)
+[![Version](https://img.shields.io/github/v/tag/giurlanda/dockyard?label=version)](https://github.com/giurlanda/dockyard/tags)
+[![License: Apache-2.0](https://img.shields.io/badge/license-Apache--2.0-blue)](LICENSE)
+[![Python 3.12+](https://img.shields.io/badge/python-3.12%2B-blue?logo=python&logoColor=white)](pyproject.toml)
+[![Docker image](https://img.shields.io/badge/ghcr.io-amd64%20%7C%20arm64-2496ED?logo=docker&logoColor=white)](https://github.com/giurlanda/dockyard/pkgs/container/dockyard)
+[![Ruff](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/astral-sh/ruff/main/assets/badge/v2.json)](https://github.com/astral-sh/ruff)
+[![mypy](https://img.shields.io/badge/type%20checked-mypy-blue)](https://mypy-lang.org/)
 
 Dockyard è un'applicazione web self-hosted e multi-utente che trasforma un repository GitHub o
 GitLab in un Progetto: un ambiente isolato in cui Claude lavora sul codice, sempre raggiungibile
