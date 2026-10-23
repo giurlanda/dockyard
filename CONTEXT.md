@@ -21,7 +21,7 @@ A User who manages the Instance: Users, limits and dangerous settings. Whoever i
 _Avoid_: admin, superuser, root
 
 **Invitation** (Invito):
-An Administrator registering a person's email; without an Invitation nobody becomes a User, even if the authentication proxy lets them through. It is used up when the person first reaches the Instance and becomes a User.
+An Administrator registering a person's email; without an Invitation nobody becomes a User, even if the authentication proxy lets them through. It is used up when the person first reaches the Instance and becomes a User, through the authentication proxy or by opening their Activation link, whichever comes first.
 
 **Claude Account** (Account Claude):
 The claude.ai subscription a User connects, shared by all of that User's Projects and never visible to other Users.
@@ -30,6 +30,30 @@ _Avoid_: Claude login, Claude credentials, API key
 **Git Credential** (Credenziale Git):
 A GitHub or GitLab access token stored in a User's profile and reusable across that User's Projects; Claude can read it inside the Projects that use it.
 _Avoid_: token (alone), secret, key
+
+**Local sign-in** (Accesso locale):
+A User proving who they are to the Instance with their email, their password and, if they turned it on, their Second factor, without the authentication proxy. Accepted only from the Local networks, never from the internet. The same person is the same User whichever way they come in.
+_Avoid_: local login, password login, LAN mode
+
+**Local networks** (Reti locali):
+The networks (the LAN, a VPN) from which the Instance accepts Local sign-in, set in the Instance configuration.
+_Avoid_: trusted networks, whitelist
+
+**Activation link** (Link di attivazione):
+A single-use, expiring link an Administrator hands to a person so they can set the password of their Local sign-in: with a new Invitation, or later to reset a forgotten password. Making a new one voids the previous one.
+_Avoid_: reset token, magic link
+
+**Second factor** (Secondo fattore):
+A code from an authenticator app that a User may choose to require at their Local sign-in, together with the single-use recovery codes that stand in for it. An Administrator can remove it from a User, who can then turn it on again.
+_Avoid_: 2FA, MFA, OTP (alone)
+
+**Code step** (Passaggio del codice):
+The part of a Local sign-in between the right password and the code of the User's Second factor, for a User who has one. It lasts a few minutes and works once: when a code is accepted it becomes a Sign-in session; when it runs out the person starts again from the password. Not a Sign-in session.
+_Avoid_: challenge, second step, MFA prompt
+
+**Sign-in session** (Sessione di accesso):
+The time a browser stays signed in to the Instance after a Local sign-in, until the User signs out, stops using it for a while, or loses it when their password changes or they are removed. Not a Session.
+_Avoid_: session (alone), login session
 
 ### Working on code
 
