@@ -20,9 +20,13 @@ body {
 }
 .topbar {
   display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between;
-  gap: 8px 16px; padding: 12px 16px; background: var(--panel); border-bottom: 1px solid var(--line);
+  gap: 4px 16px; padding: 6px 16px; background: #040927; border-bottom: 1px solid #040927;
+  --ink: #ebe9e3; --line: #3a4166; --accent: #8cc4ee; --accent-ink: #040927; color: var(--ink);
 }
-.brand { font-weight: 700; letter-spacing: .01em; }
+.topbar a { color: var(--ink); }
+.topbar button { background: transparent; color: var(--ink); }
+.brand { display: flex; align-items: center; }
+.brand img { display: block; height: 24px; width: auto; }
 .who { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; min-width: 0; }
 .badge {
   font-size: 12px; padding: 1px 8px; border-radius: 99px;
