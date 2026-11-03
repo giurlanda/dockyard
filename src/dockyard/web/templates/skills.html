@@ -25,7 +25,7 @@
     <form class="fields" method="post" action="/skills" enctype="multipart/form-data">
       <div class="field">
         <label for="file">{{ t("skills.upload.file") }}</label>
-        <input id="file" name="file" type="file" accept=".md,text/markdown"
+        <input id="file" name="file" type="file" accept=".md,.zip,text/markdown,application/zip"
                aria-describedby="file-hint" required>
         <p class="hint muted" id="file-hint">{{ t("skills.upload.hint") }}</p>
       </div>
