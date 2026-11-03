@@ -1,0 +1,35 @@
+{% extends "base.html" %}
+{% block title %}{{ skill.name }}{% endblock %}
+{% block header %}{% include "_user.html" %}{% endblock %}
+{% block content %}
+  <section class="panel">
+    <h1>{{ skill.name }}</h1>
+    <p>{{ skill.description }}</p>
+    <p class="muted">{{ t("skills.updated_at") }}: {% include "_skill_time.html" %}</p>
+    <p class="muted">{{ t("skill.read_first") }}</p>
+    {% if user.role == "administrator" %}
+      <p><a href="/skills">{{ t("skills.back") }}</a></p>
+    {% else %}
+      <p><a href="/">{{ t("notice.home") }}</a></p>
+    {% endif %}
+  </section>
+  <section class="panel" aria-labelledby="files">
+    <h2 id="files">{{ t("skill.files") }}</h2>
+    {% for file in skill.files %}
+      <h3>{{ file.path }}</h3>
+      {% if file.content is none %}
+        <p class="muted">{{ t("skill.not_text", size=file.size) }}</p>
+      {% else %}
+        <pre class="instructions">{{ file.content }}</pre>
+      {% endif %}
+    {% endfor %}
+  </section>
+  {% if user.role == "administrator" %}
+    <section class="panel" aria-labelledby="delete">
+      <h2 id="delete">{{ t("skill.delete.heading") }}</h2>
+      <form method="post" action="/skills/{{ skill.id }}/delete">
+        <div class="actions"><button class="danger">{{ t("skill.delete.button") }}</button></div>
+      </form>
+    </section>
+  {% endif %}
+{% endblock %}

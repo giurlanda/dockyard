@@ -33,6 +33,7 @@ from ..local_sign_in import LocalSignIn
 from ..projects import Projects
 from ..runtime import Runtime, RuntimeUnavailable
 from ..settings import Settings
+from ..skills import Skills
 from ..tls import Certificate, local_certificate
 from .all_projects import all_projects_routes
 from .claude_account import claude_account_routes, claude_account_status
@@ -58,6 +59,7 @@ from .local_sign_in import (
 from .own_page import own_page_routes
 from .pages import Pages, same_site_path
 from .projects import projects_routes
+from .skills import skills_routes
 from .users import users_routes
 
 ONE_YEAR = 365 * 24 * 3600
@@ -117,6 +119,7 @@ def create_instance(
     git_credentials = GitCredentials(database, settings.secret_key)
     projects = Projects(database, runtime, git_credentials, limits=settings.limits)
     images = Images(database, runtime)
+    skills = Skills(database)
     try:
         projects.resume()
     except RuntimeUnavailable as error:
@@ -136,6 +139,7 @@ def create_instance(
             git_credentials,
             projects,
             images,
+            skills,
             upkeep,
             activation_links,
             passwords=local_sign_in if settings.local else None,
@@ -151,6 +155,7 @@ def create_instance(
             git_credentials,
             projects,
             images,
+            skills,
             upkeep,
             activation_links,
             # Docker's networks as they are at start: Docker gives a new one a range of its own.
@@ -200,6 +205,7 @@ def _listener_app(
     git_credentials: GitCredentials,
     projects: Projects,
     images: Images,
+    skills: Skills,
     upkeep: _Upkeep,
     activation_links: ActivationLinks | None,  # None: Local sign-in is off
     *,
@@ -284,6 +290,7 @@ def _listener_app(
     )
     app.include_router(all_projects_routes(projects, pages))
     app.include_router(images_routes(images, pages))
+    app.include_router(skills_routes(skills, pages))
     if local_sign_in:
         app.include_router(local_sign_in_routes(local_sign_in, pages))
     app.mount("/static", StaticFiles(packages=[("dockyard.web", "static")]), name="static")

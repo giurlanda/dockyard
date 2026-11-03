@@ -178,6 +178,17 @@ MIGRATIONS = (
     );
     CREATE INDEX code_steps_email ON code_steps (email);
     """,
+    # Skills Administrators upload for Projects. files: a zip of a folder named after the Skill,
+    # with its SKILL.md at the root of that folder.
+    """
+    CREATE TABLE skills (
+        id          TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(8)))),
+        name        TEXT NOT NULL UNIQUE,
+        description TEXT NOT NULL,
+        files       BLOB NOT NULL,
+        updated_at  TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
+    );
+    """,
 )
 
 

@@ -1,0 +1,36 @@
+{% extends "base.html" %}
+{% block title %}{{ t("skills.title") }}{% endblock %}
+{% block header %}{% include "_user.html" %}{% endblock %}
+{% block content %}
+  <section class="panel" aria-labelledby="skills">
+    <h1 id="skills">{{ t("skills.heading") }}</h1>
+    <p class="muted">{{ t("skills.explain") }}</p>
+    {% if skills %}
+      <ul class="projects">
+        {% for skill in skills %}
+          <li>
+            <a href="/skills/{{ skill.id }}">{{ skill.name }}</a>
+            <span class="muted">{{ t("skills.updated_at") }}: {% include "_skill_time.html" %}</span>
+            <span class="muted repository">{{ skill.description }}</span>
+          </li>
+        {% endfor %}
+      </ul>
+    {% else %}
+      <p class="muted">{{ t("skills.empty") }}</p>
+    {% endif %}
+  </section>
+  <section class="panel" aria-labelledby="upload">
+    <h2 id="upload">{{ t("skills.upload.heading") }}</h2>
+    {% if problem %}<p class="outcome bad" role="alert">{{ t(problem) }}</p>{% endif %}
+    <form class="fields" method="post" action="/skills" enctype="multipart/form-data">
+      <div class="field">
+        <label for="file">{{ t("skills.upload.file") }}</label>
+        <input id="file" name="file" type="file" accept=".md,text/markdown"
+               aria-describedby="file-hint" required>
+        <p class="hint muted" id="file-hint">{{ t("skills.upload.hint") }}</p>
+      </div>
+      <div class="actions"><button class="primary">{{ t("skills.upload.button") }}</button></div>
+    </form>
+    <p><a href="/">{{ t("notice.home") }}</a></p>
+  </section>
+{% endblock %}
