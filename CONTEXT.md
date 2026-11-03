@@ -78,6 +78,10 @@ _Avoid_: template, environment, stack
 **Base Image** (Immagine base):
 The Image shipped with Dockyard (Claude Code, git, `gh`, `glab`, Node, Python) from which every other Image derives.
 
+**Skill** (Skill):
+Instructions for Claude Code, invoked by name, that an Administrator adds to the Instance; a User picks which ones a Project gets, when creating it or later. A Project's Skills are its own: never part of its repository, never seen by the owner's other Projects. A Skill in use by a Project cannot be deleted; a changed one reaches its Projects when they next start.
+_Avoid_: command, slash command, plugin, extension
+
 **Privileged Project** (Progetto privilegiato):
 A Project whose environment has full access to the host (equivalent to root on the machine); only a User granted this permission by an Administrator can create one.
 _Avoid_: root project, admin project
