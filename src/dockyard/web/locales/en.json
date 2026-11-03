@@ -405,6 +405,7 @@
   "skills.heading": "Skills",
   "skills.explain": "Skills give Claude Code the same procedures in every Project that picks them, each invoked as /name. Upload a Markdown file, or a .zip of a folder with a SKILL.md and its supporting files: the frontmatter gives the Skill its name (for a Markdown file, else the file name) and its description, which tells Claude Code when to use it.",
   "skills.empty": "No Skills yet.",
+  "skills.precedence": "Inside a Project, its Skill wins over a skill with the same name in the repository's .claude/skills. Personal skills a User keeps in ~/.claude/skills, in the Claude configuration their Projects share, are not seen inside Projects.",
   "skills.updated_at": "Last changed",
   "skills.upload.heading": "Upload a Skill",
   "skills.upload.file": "Markdown file or .zip",

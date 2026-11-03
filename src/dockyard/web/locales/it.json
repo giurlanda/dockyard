@@ -405,6 +405,7 @@
   "skills.heading": "Skill",
   "skills.explain": "Le Skill danno a Claude Code le stesse procedure in ogni Progetto che le sceglie, ognuna invocata come /nome. Carica un file Markdown, o uno .zip di una cartella con uno SKILL.md e i suoi file di supporto: il frontmatter dà alla Skill il nome (per un file Markdown, altrimenti quello del file) e la descrizione, che dice a Claude Code quando usarla.",
   "skills.empty": "Ancora nessuna Skill.",
+  "skills.precedence": "Dentro un Progetto, la sua Skill prevale su una skill con lo stesso nome nella cartella .claude/skills del repository. Le skill personali che un Utente tiene in ~/.claude/skills, nella configurazione di Claude condivisa dai suoi Progetti, non si vedono dentro i Progetti.",
   "skills.updated_at": "Ultima modifica",
   "skills.upload.heading": "Carica una Skill",
   "skills.upload.file": "File Markdown o .zip",
