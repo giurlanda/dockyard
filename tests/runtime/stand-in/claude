@@ -32,6 +32,10 @@ login() {
   echo "Login successful."
 }
 
+writable() {
+  touch "$1/.probe" 2>/dev/null && rm "$1/.probe" && echo yes || echo no
+}
+
 remote_control() {
   local config="$CLAUDE_CONFIG_DIR/.claude.json"
   echo "$*"
@@ -76,6 +80,13 @@ remote_control() {
   echo "dns: $(sed -n 's/^# ExtServers: \[\(.*\)\]$/\1/p' /etc/resolv.conf)"
   echo "anthropic environment: $(env | grep -oE '^(ANTHROPIC|CLAUDE_CODE)_[A-Z_]+' \
     | sort | paste -sd ' ' -)"
+  # Each file of the user-level skills: its path, mode and content (one line in the suite).
+  local skills="$CLAUDE_CONFIG_DIR/skills"
+  echo "skills: $( (cd "$skills" 2>/dev/null && find . -type f | sort | while read -r file; do
+    printf '%s %s %s\n' "${file#./}" "$(stat -c %a "$file")" "$(cat "$file")"; done) \
+    | paste -sd ';' - | sed 's/;/; /g')"
+  echo "skills writable: $(writable "$skills")"
+  echo "claude config writable: $(writable "$CLAUDE_CONFIG_DIR")"
   echo "Remote Control ready"
   trap 'echo "Terminal size: $(stty size)"' WINCH
   sleep infinity &

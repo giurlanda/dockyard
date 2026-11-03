@@ -8,10 +8,12 @@ import ipaddress
 import os
 import secrets
 import socket
+import tarfile
 import threading
 import time
 from collections.abc import Callable, Iterator, Sequence
 from contextlib import contextmanager, suppress
+from pathlib import PurePosixPath
 from typing import Any
 
 import docker
@@ -40,6 +42,7 @@ from . import (
     ProjectNotRunning,
     ProjectStatus,
     RuntimeUnavailable,
+    Skill,
     Stats,
     project_path,
 )
@@ -49,6 +52,8 @@ NON_ROOT_USER = "ubuntu"
 HOME = "/home/ubuntu"
 CLAUDE_CONFIG_DIR = "/home/ubuntu/.claude"  # CLAUDE_CONFIG_DIR in the Base Image
 CREDENTIALS = f"{CLAUDE_CONFIG_DIR}/.credentials.json"
+# The user-level skills folder: the Project's own skills volume, read-only, over the Claude config.
+SKILLS = f"{CLAUDE_CONFIG_DIR}/skills"
 # The Base Image's working directory. Never a volume mount point: with Docker 29 that resets the
 # volume's root to root:root. Project paths are below it.
 WORKSPACE = "/workspace"
@@ -145,6 +150,7 @@ IMAGE_LABEL = "dockyard.image"
 LOGIN_ENVIRONMENT = "login-environment"
 CLONE = "clone"
 PROJECT_ENVIRONMENT = "project"
+SKILLS_FILL = "skills-fill"
 IMAGE = "image"
 IMAGE_CHECK = "image-check"
 # What check_image runs in an Image, as its default user. sh: an Image may lack bash.
@@ -270,22 +276,8 @@ class DockerRuntime:
     def remove_claude_account(self, user: str) -> None:
         with self._docker():
             self.stop_login_environment(user)
-            try:
-                claude_config = self._client.volumes.get(_claude_config_volume(user))
-            except NotFound:
-                return
             # A login environment Docker is still removing holds the volume for a moment.
-            deadline = time.monotonic() + VOLUME_RELEASE_TIMEOUT
-            while True:
-                try:
-                    claude_config.remove(force=True)
-                    return
-                except NotFound:
-                    return
-                except APIError:
-                    if time.monotonic() > deadline:
-                        raise
-                    time.sleep(VOLUME_RELEASE_INTERVAL)
+            self._remove_volume(_claude_config_volume(user))
 
     def start_clone(
         self, user: str, project: str, repository: str, *, credential: GitToken | None = None
@@ -349,6 +341,7 @@ class DockerRuntime:
         memory: int = PROJECT_MEMORY,
         privileged: bool = False,
         image: str | None = None,
+        skills: Sequence[Skill] = (),
     ) -> None:
         path = project_path(project)
         with self._docker():
@@ -361,6 +354,7 @@ class DockerRuntime:
             claude_config = self._ensure_claude_config(user)
             self._trust(user, claude_config, path)
             self.stop_project(project)
+            project_skills = self._fill_skills(user, project, skills)
             environment = self._client.containers.create(
                 _image_tag(image) if image else self._base_image,
                 # Never the working directory: that would reset the volume's root to root:root.
@@ -375,6 +369,8 @@ class DockerRuntime:
                     code: {"bind": path, "mode": "rw"},
                     home: {"bind": HOME, "mode": "rw"},
                     claude_config: {"bind": CLAUDE_CONFIG_DIR, "mode": "rw"},
+                    # nocopy: Docker would fill an empty volume with what the image holds there.
+                    project_skills: {"bind": SKILLS, "mode": "ro,nocopy"},
                 },
                 working_dir=WORKSPACE,
                 # Where gh and glab look for the Git Credential: see write_git_credential.
@@ -535,6 +531,8 @@ class DockerRuntime:
             for container in self._project_containers(project):
                 with suppress(NotFound):
                     container.remove(force=True)
+            # Its Skills go in any case: every start refills them.
+            self._remove_volume(_skills_volume(project))
             if code:
                 for volume in (_code_volume(project), _home_volume(project)):
                     with suppress(NotFound):
@@ -672,6 +670,48 @@ class DockerRuntime:
             labels=_labels("claude-config-check", user),
         )
         return exit_status != 0
+
+    def _fill_skills(self, user: str, project: str, skills: Sequence[Skill]) -> str:
+        """The Project's skills volume, made anew holding exactly `skills`, owned by root: its
+        environment is stopped, so nothing holds the old one.
+
+        Copied in through a helper container that never starts: Docker writes into the volumes
+        of a created container.
+        """
+        name = _skills_volume(project)
+        for stale in self._project_containers(project, SKILLS_FILL):  # left by a crash
+            stale.remove(force=True)
+        self._remove_volume(name)  # its environment, being removed, may still hold it
+        labels = {**_labels("skills", user), PROJECT_LABEL: project}
+        self._client.volumes.create(name, labels=labels)
+        helper = self._client.containers.create(
+            self._base_image,
+            ["true"],
+            volumes={name: {"bind": HANDOVER_MOUNT, "mode": "rw"}},
+            labels={**labels, KIND_LABEL: SKILLS_FILL},
+            network_disabled=True,
+            **HARDENING,
+        )
+        try:
+            if not helper.put_archive(HANDOVER_MOUNT, _skills_archive(skills)):
+                raise RuntimeUnavailable(f"Could not write the Skills of {project}")
+        finally:
+            helper.remove(force=True)
+        return name
+
+    def _remove_volume(self, name: str) -> None:
+        """Remove the volume, if there, waiting for containers being removed to let go of it."""
+        deadline = time.monotonic() + VOLUME_RELEASE_TIMEOUT
+        while True:
+            try:
+                self._client.volumes.get(name).remove(force=True)
+                return
+            except NotFound:
+                return
+            except APIError:
+                if time.monotonic() > deadline:
+                    raise
+                time.sleep(VOLUME_RELEASE_INTERVAL)
 
     def _ensure_network(self) -> str:
         """The Projects network, created on first use."""
@@ -913,6 +953,32 @@ def _code_volume(project: str) -> str:
 
 def _home_volume(project: str) -> str:
     return f"dockyard-home-{project}"
+
+
+def _skills_volume(project: str) -> str:
+    return f"dockyard-skills-{project}"
+
+
+def _skills_archive(skills: Sequence[Skill]) -> bytes:
+    """A tar of the Skills' folders, owned by root: readable by all, executable as given."""
+    archive = io.BytesIO()
+    with tarfile.open(fileobj=archive, mode="w") as tar:
+        for skill in skills:
+            folders = {skill.name} | {
+                f"{skill.name}/{parent}"
+                for file in skill.files
+                for parent in map(str, PurePosixPath(file.path).parents)
+                if parent != "."
+            }
+            for folder in sorted(folders):
+                entry = tarfile.TarInfo(folder)
+                entry.type, entry.mode = tarfile.DIRTYPE, 0o755
+                tar.addfile(entry)
+            for file in skill.files:
+                entry = tarfile.TarInfo(f"{skill.name}/{file.path}")
+                entry.size, entry.mode = len(file.content), 0o755 if file.executable else 0o644
+                tar.addfile(entry, io.BytesIO(file.content))
+    return archive.getvalue()
 
 
 def _image_tag(image: str) -> str:

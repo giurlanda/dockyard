@@ -7,7 +7,7 @@ the same behaviour.
 
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
 from enum import StrEnum
 from ipaddress import IPv4Network, IPv6Network
@@ -85,6 +85,23 @@ class GitToken:
 
     host: str
     token: str = field(repr=False)
+
+
+@dataclass(frozen=True)
+class SkillFile:
+    path: str  # within its Skill's folder
+    content: bytes = field(repr=False)
+    executable: bool = False
+
+
+@dataclass(frozen=True)
+class Skill:
+    """A Skill a Project starts with: its folder, named after it, holding its files. Its name is
+    a valid skill name, unique among the Skills given, and its file paths are safe and relative,
+    as the catalog makes sure (dockyard.skills)."""
+
+    name: str
+    files: tuple[SkillFile, ...]
 
 
 @dataclass(frozen=True)
@@ -204,10 +221,17 @@ class Runtime(Protocol):
         memory: int = PROJECT_MEMORY,
         privileged: bool = False,
         image: str | None = None,
+        skills: Sequence[Skill] = (),
     ) -> None:
         """(Re)create the Project's environment from the build `image` (see build_image), or
         from the Base Image as it is now when None; it may use `cpus` CPUs and `memory` bytes of
         RAM. Then start its Remote Control Server in it.
+
+        The environment reads the Project's `skills`, exactly those, each a folder named after
+        it, under the user-level skills folder of the Claude config (`~/.claude/skills`, ADR
+        0005): files executable or not as given, nothing there writable, an empty folder with no
+        Skills. The rest of the Claude config stays writable and shared by the User's Projects;
+        the User's other Projects never see these Skills.
 
         The environment is hardened (no capabilities, no new privileges), unless `privileged`:
         then it runs privileged, which equals root on the host. Either way it runs as the
@@ -284,8 +308,8 @@ class Runtime(Protocol):
     def project_status(self, project: str) -> ProjectStatus: ...
 
     def remove_project(self, project: str, *, code: bool) -> None:
-        """Remove everything the Project runs (its clone included), and its code and home only
-        if asked."""
+        """Remove everything the Project runs (its clone included) and its Skills, and its code
+        and home only if asked."""
         ...
 
     def project_outdated(self, project: str, image: str | None) -> bool:
