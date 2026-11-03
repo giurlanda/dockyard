@@ -249,6 +249,19 @@ def projects_routes(
             raise HTTPException(404)
         return ProjectOut.of(changed)
 
+    @router.put("/api/projects/{project}/skills", response_model=ProjectOut)
+    def change_project_skills(
+        request: Request, user: CurrentUser, project: str, picked: list[str]
+    ) -> object:
+        """Replace its Skills (ids) from its next start on."""
+        try:
+            changed = projects.change_skills(user, project, picked)
+        except ProjectRefused as refusal:
+            return refused(request, refusal)
+        if changed is None:
+            raise HTTPException(404)
+        return ProjectOut.of(changed)
+
     @router.get("/api/projects/{project}/clone")
     def get_clone(user: CurrentUser, project: str) -> CloneOut:
         report = projects.clone(user, project)
@@ -373,6 +386,7 @@ def projects_routes(
         found: Project,
         *,
         problem: str | None = None,
+        problem_in: str | None = None,  # the section saying it
         status_code: int = 200,
     ) -> HTMLResponse:
         credential = (
@@ -388,7 +402,9 @@ def projects_routes(
             git_credential=credential,
             image=images.get(found.image),
             images=images.ready(),
+            skills=skills.list_all(),
             problem=problem,
+            problem_in=problem_in,
         )
 
     @router.get("/projects/{project}", response_class=HTMLResponse)
@@ -428,8 +444,35 @@ def projects_routes(
         project: str,
         image: Annotated[str, Form()] = BASE_IMAGE,
     ) -> Response:
+        return changed_on_page(
+            request, user, project, "image", lambda: projects.change_image(user, project, image)
+        )
+
+    @router.post("/projects/{project}/skills", response_model=None)
+    def change_skills_from_page(
+        request: Request,
+        user: CurrentUser,
+        project: str,
+        picked: Annotated[list[str] | None, Form(alias="skills")] = None,  # none: all unpicked
+    ) -> Response:
+        return changed_on_page(
+            request,
+            user,
+            project,
+            "skills",
+            lambda: projects.change_skills(user, project, picked or []),
+        )
+
+    def changed_on_page(
+        request: Request,
+        user: User,
+        project: str,
+        section: str,
+        change: Callable[[], Project | None],
+    ) -> Response:
+        """Back to the Project's page, or that page saying in `section` why it was refused."""
         try:
-            changed = projects.change_image(user, project, image)
+            changed = change()
         except ProjectRefused as refusal:
             found = projects.get(user, project)
             if found is None:
@@ -439,6 +482,7 @@ def projects_routes(
                 user,
                 found,
                 problem=f"project_refused.{refusal.reason}.body",
+                problem_in=section,
                 status_code=status_code(refusal),
             )
         if changed is None:

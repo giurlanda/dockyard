@@ -92,10 +92,33 @@
       <p class="hint muted" data-stat="cpus" data-template="{{ t('project.cpu_hint', cpus='{value}') }}"></p>
     </section>
   {% endif %}
+  {% if skills or problem_in == "skills" %}
+    <section class="panel" aria-labelledby="skills">
+      <h2 id="skills">{{ t("project.change_skills.heading") }}</h2>
+      {% if problem and problem_in == "skills" %}<p class="outcome bad" role="alert">{{ t(problem) }}</p>{% endif %}
+      {% set picked = project.skills | map(attribute="id") | list %}
+      <form method="post" action="/projects/{{ project.id }}/skills">
+        <fieldset class="field skills" aria-describedby="change-skills-hint">
+          <legend>{{ t("project.skills") }}</legend>
+          <p class="hint muted" id="change-skills-hint">{{ t("project.change_skills.explain") }}</p>
+          {% for offered in skills %}
+            <label class="check">
+              <input type="checkbox" name="skills" value="{{ offered.id }}"{{ " checked" if offered.id in picked }}
+                     aria-describedby="change-skill-{{ offered.id }}-hint">
+              {{ offered.name }}
+            </label>
+            <p class="hint muted" id="change-skill-{{ offered.id }}-hint">{{ offered.description }}
+              <a href="/skills/{{ offered.id }}" target="_blank" rel="noopener">{{ t("project_new.read_skill") }}</a></p>
+          {% endfor %}
+        </fieldset>
+        <div class="actions"><button>{{ t("project.change_skills.button") }}</button></div>
+      </form>
+    </section>
+  {% endif %}
   {% if project.status != "cloning" %}
     <section class="panel" aria-labelledby="image">
       <h2 id="image">{{ t("project.change_image.heading") }}</h2>
-      {% if problem %}<p class="outcome bad" role="alert">{{ t(problem) }}</p>{% endif %}
+      {% if problem and problem_in == "image" %}<p class="outcome bad" role="alert">{{ t(problem) }}</p>{% endif %}
       {% if project.status == "stopped" %}
         <form method="post" action="/projects/{{ project.id }}/image">
           <fieldset class="field images" aria-describedby="change-image-hint">

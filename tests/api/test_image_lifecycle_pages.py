@@ -98,7 +98,7 @@ def test_a_project_on_an_older_build_shows_update_available_on_its_page_and_the_
 
     page = dockyard.get(f"/projects/{project}", headers=user).text
     assert "Update available" in page
-    assert "Restart it to move to the newer build" in page
+    assert "Restart it to pick them up" in page
     assert "Update available" in dockyard.get("/", headers=user).text
 
 

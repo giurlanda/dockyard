@@ -302,11 +302,14 @@
   "image_building.title": "Already building",
   "image_building.body": "This Image is being built already: wait until its build ends.",
   "projects.update_available": "Update available",
-  "project.update_available": "A newer build of its Image is ready. Restart it to move to the newer build: its code and home folder stay.",
+  "project.update_available": "A newer build of its Image, or a change to its Skills, is waiting. Restart it to pick them up: its code and home folder stay.",
   "project.change_image.heading": "Change Image",
   "project.change_image.explain": "The Project starts in the Image you pick from its next start on, and keeps its code and home folder.",
   "project.change_image.button": "Change Image",
   "project.change_image.stop_first": "Stop the Project to change its Image: its code and home folder stay.",
+  "project.change_skills.heading": "Change Skills",
+  "project.change_skills.explain": "The Project starts with the Skills you pick from its next start on. While it runs, it keeps the ones it has and its open Sessions until you restart it.",
+  "project.change_skills.button": "Change Skills",
   "image.previous_build": "Projects using this Image keep starting from its previous build, which passed its check, until a new build does.",
   "image.rebuild.explain": "Build it again from its instructions, on top of the Base Image as it is now. Projects keep starting from the build they have until the new one is ready.",
   "image.rebuild.button": "Build again",
@@ -436,5 +439,5 @@
   "project_new.read_skill": "Read it",
   "project.skills": "Skills",
   "project.no_skills": "None",
-  "project_refused.skill_not_found.body": "One of the Skills picked no longer exists: pick among the Skills offered on the new Project form."
+  "project_refused.skill_not_found.body": "One of the Skills picked no longer exists: pick among the Skills offered."
 }

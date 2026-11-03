@@ -199,6 +199,17 @@ MIGRATIONS = (
     );
     CREATE INDEX project_skills_skill ON project_skills (skill);
     """,
+    # A Skill's revision, to grow on every replacement. started_skills: which Skills, at which
+    # revision, the Project's environment last started with, as JSON [[id, revision], ...] (see
+    # Projects._start); a running Project started with those it has.
+    """
+    ALTER TABLE skills ADD COLUMN revision INTEGER NOT NULL DEFAULT 1;
+    ALTER TABLE projects ADD COLUMN started_skills TEXT NOT NULL DEFAULT '[]';
+    UPDATE projects SET started_skills = (
+        SELECT json_group_array(json_array(skill, 1)) FROM project_skills
+        WHERE project = projects.id
+    );
+    """,
 )
 
 

@@ -302,11 +302,14 @@
   "image_building.title": "Costruzione già in corso",
   "image_building.body": "Questa Immagine è già in costruzione: aspetta che la costruzione finisca.",
   "projects.update_available": "Aggiornamento disponibile",
-  "project.update_available": "È pronta una nuova costruzione della sua Immagine. Riavvialo per passare alla nuova costruzione: codice e cartella home restano.",
+  "project.update_available": "È pronta una nuova costruzione della sua Immagine, o sono cambiate le sue Skill. Riavvialo per adottarle: codice e cartella home restano.",
   "project.change_image.heading": "Cambia Immagine",
   "project.change_image.explain": "Il Progetto parte nell'Immagine che scegli dal prossimo avvio in poi, e mantiene il codice e la cartella home.",
   "project.change_image.button": "Cambia Immagine",
   "project.change_image.stop_first": "Ferma il Progetto per cambiarne l'Immagine: codice e cartella home restano.",
+  "project.change_skills.heading": "Cambia Skill",
+  "project.change_skills.explain": "Il Progetto parte con le Skill che scegli dal prossimo avvio in poi. Mentre è in esecuzione, mantiene quelle che ha e le Sessioni aperte finché non lo riavvii.",
+  "project.change_skills.button": "Cambia Skill",
   "image.previous_build": "I Progetti che usano questa Immagine continuano a partire dalla sua costruzione precedente, che ha superato la verifica, finché una nuova non la supera.",
   "image.rebuild.explain": "Costruiscila di nuovo dalle sue istruzioni, sopra l'Immagine base attuale. I Progetti continuano a partire dalla costruzione che hanno finché la nuova non è pronta.",
   "image.rebuild.button": "Costruisci di nuovo",
@@ -436,5 +439,5 @@
   "project_new.read_skill": "Leggila",
   "project.skills": "Skill",
   "project.no_skills": "Nessuna",
-  "project_refused.skill_not_found.body": "Una delle Skill scelte non esiste più: scegli tra le Skill proposte nel modulo del nuovo Progetto."
+  "project_refused.skill_not_found.body": "Una delle Skill scelte non esiste più: scegli tra le Skill proposte."
 }
