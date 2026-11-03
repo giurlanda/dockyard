@@ -136,7 +136,7 @@ def test_every_user_lists_skills_and_reads_one_with_its_full_content(
     assert read.status_code == 200
     assert read.json()["description"] == "Review the current branch against the team's checklist."
     assert read.json()["files"] == [
-        {"path": "SKILL.md", "size": len(REVIEW.encode()), "content": REVIEW}
+        {"path": "SKILL.md", "size": len(REVIEW.encode()), "content": REVIEW, "executable": False}
     ]
     assert dockyard.get("/api/skills/unknown", headers=user).status_code == 404
 

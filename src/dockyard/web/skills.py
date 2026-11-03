@@ -38,6 +38,7 @@ class SkillFileOut(BaseModel):
     path: str
     size: int
     content: str | None  # None when it is not text
+    executable: bool
 
 
 class SkillDetailsOut(SkillOut):
@@ -45,7 +46,10 @@ class SkillDetailsOut(SkillOut):
 
     @classmethod
     def of_details(cls, skill: Skill) -> SkillDetailsOut:
-        files = [SkillFileOut(path=f.path, size=f.size, content=f.content) for f in skill.files]
+        files = [
+            SkillFileOut(path=f.path, size=f.size, content=f.content, executable=f.executable)
+            for f in skill.files
+        ]
         return cls(files=files, **SkillOut.of(skill).model_dump())
 
 
