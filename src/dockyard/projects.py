@@ -201,8 +201,8 @@ class Project:
     # holds the permission to create Privileged Projects.
     privileged: bool = False
     image: str = BASE_IMAGE  # the id of the Image its environment runs
-    # It runs an older build of its Image than the one it would start from now: it moves to the
-    # newer one when it starts again.
+    # It runs an older build of its Image, or other Skills, than it would start with now: it moves
+    # to them when it starts again.
     update_available: bool = False
     skills: tuple[Skill, ...] = ()  # what its environment gets at every start, sorted by name
 
@@ -464,6 +464,31 @@ class Projects:
             raise ProjectRefused(Refusal.NOT_STOPPED)
         return self.get(owner, project)
 
+    def change_skills(self, owner: User, project: str, skills: Sequence[str]) -> Project | None:
+        """Have the Project start with `skills` (ids in the catalog) from its next start on,
+        whether it runs or not: a running one keeps its Sessions, and the Skills it has, until
+        it restarts. None if not found.
+
+        Raises ProjectRefused, RuntimeUnavailable.
+        """
+        if self._row(owner, project) is None:
+            return None
+        skills = list(dict.fromkeys(skills))
+        if not self._skills_exist(skills):
+            raise ProjectRefused(Refusal.SKILL_NOT_FOUND)
+        try:
+            with self._db.transaction() as conn:
+                conn.execute("DELETE FROM project_skills WHERE project = ?", (project,))
+                conn.executemany(
+                    "INSERT INTO project_skills (project, skill) VALUES (?, ?)",
+                    [(project, skill) for skill in skills],
+                )
+        except sqlite3.IntegrityError as error:  # a Skill, or the Project, deleted meanwhile
+            if not self._skills_exist(skills):
+                raise ProjectRefused(Refusal.SKILL_NOT_FOUND) from error
+            return None
+        return self.get(owner, project)
+
     def stop_any(self, project: str) -> OwnedProject | None:
         """Stop any Project on the Instance, as its owner would: for Administrators only. None
         if not found.
@@ -673,6 +698,7 @@ class Projects:
                     if row["privileged"] and not self._permitted(row["owner"]):
                         self._should_run(row["id"], False)
                         return
+                    skills, started = self._skills_to_start(row["id"])
                     self._runtime.start_project(
                         row["owner"],
                         row["id"],
@@ -683,8 +709,13 @@ class Projects:
                         memory=min(row["memory"], self.limits.max_memory),
                         privileged=bool(row["privileged"]),
                         image=_build_to_start(row),
-                        skills=self._skills_to_start(row["id"]),
+                        skills=skills,
                     )
+                    with self._db.transaction() as conn:
+                        conn.execute(
+                            "UPDATE projects SET started_skills = ? WHERE id = ?",
+                            (json.dumps(started), row["id"]),
+                        )
                 if row["git_credential"]:
                     start = self._runtime.project_starts().get(row["id"])
                     self._write_git_credential(row, start)
@@ -915,15 +946,26 @@ class Projects:
             Skill(row["id"], row["name"], row["description"], row["updated_at"]) for row in rows
         )
 
-    def _skills_to_start(self, project: str) -> tuple[SkillToStart, ...]:
-        """The Project's Skills with their files as they are now."""
+    def _skills_to_start(self, project: str) -> tuple[tuple[SkillToStart, ...], _SkillRevisions]:
+        """The Project's Skills with their files as they are now, and their revisions."""
         with self._db.transaction() as conn:
             rows = conn.execute(
-                "SELECT name, files FROM skills JOIN project_skills ON skill = id"
+                "SELECT id, revision, name, files FROM skills JOIN project_skills ON skill = id"
                 " WHERE project = ?",
                 (project,),
             ).fetchall()
-        return tuple(SkillToStart(row["name"], unpacked(row["files"])) for row in rows)
+        skills = tuple(SkillToStart(row["name"], unpacked(row["files"])) for row in rows)
+        return skills, _skill_revisions(rows)
+
+    def _skills_now(self, project: str) -> _SkillRevisions:
+        """Which Skills, at which revision, the Project would start with now."""
+        with self._db.transaction() as conn:
+            rows = conn.execute(
+                "SELECT id, revision FROM skills JOIN project_skills ON skill = id"
+                " WHERE project = ?",
+                (project,),
+            ).fetchall()
+        return _skill_revisions(rows)
 
     def _permitted(self, owner: str) -> bool:
         """Whether the owner holds the permission to create Privileged Projects."""
@@ -951,10 +993,12 @@ class Projects:
         else:
             status = _STATUS[found]
         # Its Image always has a build: a Project only ever gets a ready one.
-        outdated = (
-            found in _HAS_ENVIRONMENT
-            and not (row["image"] and not row["build"])
-            and self._runtime.project_outdated(row["id"], row["build"])
+        outdated = found in _HAS_ENVIRONMENT and (
+            sorted(json.loads(row["started_skills"])) != self._skills_now(row["id"])
+            or (
+                not (row["image"] and not row["build"])
+                and self._runtime.project_outdated(row["id"], row["build"])
+            )
         )
         return Project(
             id=row["id"],
@@ -974,12 +1018,13 @@ class Projects:
         )
 
 
-# What has an environment, which may run an older build than the Project would start from now.
+# What has an environment, which may run an older build, or other Skills, than the Project would
+# start with now.
 _HAS_ENVIRONMENT = (ProjectStatus.RUNNING, ProjectStatus.TRUST_PROMPT, ProjectStatus.FAILED)
 # build: the build of its Image it starts from, NULL for the Base Image.
 _COLUMNS = (
     "id, name, repository, provider, visibility, permission_mode, should_run, git_credential,"
-    " cpus, memory, privileged, image,"
+    " cpus, memory, privileged, image, started_skills,"
     " (SELECT build FROM images WHERE images.id = projects.image) AS build"
 )
 # Projects with their owner's email, as Administrators see them.
@@ -990,6 +1035,14 @@ _OWNED = (
 # How many active Projects an owner (the parameter) has: those that should run, whether they
 # run, wait for a Claude Account, keep failing or are still being cloned.
 _ACTIVE = "SELECT count(*) FROM projects WHERE owner = ? AND should_run = 1"
+
+
+# Which Skills at which revision, [[id, revision], ...] sorted: equal for equal sets.
+type _SkillRevisions = list[list[str | int]]
+
+
+def _skill_revisions(rows: list[sqlite3.Row]) -> _SkillRevisions:
+    return sorted([row["id"], row["revision"]] for row in rows)
 
 
 def _build_to_start(row: sqlite3.Row) -> str | None:

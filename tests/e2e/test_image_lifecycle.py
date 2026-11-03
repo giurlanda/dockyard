@@ -48,7 +48,7 @@ def test_a_project_on_an_older_build_shows_update_available_until_it_restarts(
     page.goto("/")
     expect(page.get_by_test_id("project-update")).to_have_text("Update available")
     page.goto(project)
-    expect(page.get_by_text("Restart it to move to the newer build")).to_be_visible()
+    expect(page.get_by_text("Restart it to pick them up")).to_be_visible()
     page.get_by_role("button", name="Restart").click()
     expect(page.get_by_test_id("project-status")).to_have_text("Running")
     expect(page.get_by_test_id("project-update")).to_have_count(0)
