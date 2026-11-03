@@ -105,28 +105,27 @@ class Skills:
         return _skill(row, files=_files(files))
 
     def replace(self, skill: str, upload: bytes, file_name: str) -> Skill | None:
-        """Replace the Skill's files with the uploaded Markdown file or .zip, of the same name: its
-        revision moves on, and the Projects using it get the new files at their next start. None if
-        not found.
+        """Replace the Skill's files with the uploaded Markdown file or .zip: its revision moves
+        on, and the Projects using it get the new files at their next start. It keeps its name,
+        whatever the file's name, when the upload declares none. None if not found.
 
         Raises SkillRefused.
         """
-        name, description, files = _unpack(upload, file_name)
+        with self._db.transaction() as conn:
+            current = conn.execute("SELECT name FROM skills WHERE id = ?", (skill,)).fetchone()
+        if current is None:
+            return None
+        name, description, files = _unpack(upload, file_name, unnamed=current["name"])
+        if name != current["name"]:
+            raise SkillRefused(Refusal.NAME_DIFFERS)
         with self._db.transaction() as conn:
             row = conn.execute(
                 "UPDATE skills SET description = ?, files = ?, revision = revision + 1,"
                 " updated_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now')"
-                f" WHERE id = ? AND name = ? RETURNING {_COLUMNS}",
-                (description, files, skill, name),
+                f" WHERE id = ? RETURNING {_COLUMNS}",
+                (description, files, skill),
             ).fetchone()
-            exists = row is not None or bool(
-                conn.execute("SELECT 1 FROM skills WHERE id = ?", (skill,)).fetchone()
-            )
-        if row is None:
-            if exists:
-                raise SkillRefused(Refusal.NAME_DIFFERS)
-            return None
-        return _skill(row, files=_files(files))
+        return _skill(row, files=_files(files)) if row else None  # None: deleted meanwhile
 
     def list_all(self) -> list[Skill]:
         with self._db.transaction() as conn:
@@ -153,17 +152,18 @@ class Skills:
             raise SkillInUse from error
 
 
-def _unpack(upload: bytes, file_name: str) -> tuple[str, str, bytes]:
-    """The name, description and files (as stored) of an upload. Raises SkillRefused."""
+def _unpack(upload: bytes, file_name: str, unnamed: str | None = None) -> tuple[str, str, bytes]:
+    """The name, description and files (as stored) of an upload: when its frontmatter has no name,
+    `unnamed`, else (for a Markdown file) the file's. Raises SkillRefused."""
     if len(upload) > UPLOAD_MAX_BYTES:
         raise SkillRefused(Refusal.TOO_LARGE)
     path = PurePosixPath(file_name.replace("\\", "/"))
     if path.suffix.lower() == ".md":
-        name, description = _name_and_description(upload, path.stem)
+        name, description = _name_and_description(upload, unnamed or path.stem)
         return name, description, _folder(name, {SKILL_FILE: (upload, False)})
     if path.suffix.lower() == ".zip":
         files = _archived(upload)
-        name, description = _name_and_description(files[SKILL_FILE][0], None)
+        name, description = _name_and_description(files[SKILL_FILE][0], unnamed)
         return name, description, _folder(name, files)
     raise SkillRefused(Refusal.NOT_MARKDOWN)
 
