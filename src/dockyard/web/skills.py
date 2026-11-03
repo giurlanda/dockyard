@@ -1,6 +1,7 @@
 """Skills: Administrators upload, replace and delete them; every User lists them and reads each one.
 
-Uploading, replacing and deleting, and the page listing the catalog, are for Administrators only.
+Uploading, replacing and deleting, the page listing the catalog, and which Projects use a Skill,
+are for Administrators only.
 """
 
 from __future__ import annotations
@@ -12,9 +13,10 @@ from fastapi.responses import HTMLResponse, RedirectResponse
 from pydantic import BaseModel
 from starlette.responses import Response
 
-from ..accounts import User
+from ..accounts import Role, User
 from ..skills import UPLOAD_MAX_BYTES, Skill, SkillInUse, SkillNameTaken, SkillRefused, Skills
 from .guard import CurrentAdministrator, CurrentUser
+from .images import using
 from .pages import Pages
 
 
@@ -41,6 +43,11 @@ class SkillFileOut(BaseModel):
     executable: bool
 
 
+class UsingProjectOut(BaseModel):
+    name: str
+    owner: str  # its owner's email
+
+
 class SkillDetailsOut(SkillOut):
     files: list[SkillFileOut]
 
@@ -51,6 +58,12 @@ class SkillDetailsOut(SkillOut):
             for f in skill.files
         ]
         return cls(files=files, **SkillOut.of(skill).model_dump())
+
+
+class SkillUsedOut(SkillDetailsOut):
+    """A Skill as Administrators see it: with the Projects using it, of every User."""
+
+    used_by: list[UsingProjectOut]
 
 
 def skills_routes(skills: Skills, pages: Pages) -> APIRouter:
@@ -103,6 +116,7 @@ def skills_routes(skills: Skills, pages: Pages) -> APIRouter:
             status_code=status_code,
             user=user,
             skill=found(skill),
+            used_by=skills.used_by(skill) if user.role == Role.ADMINISTRATOR else [],
             problem=problem,
             replace_problem=replace_problem,
         )
@@ -130,9 +144,13 @@ def skills_routes(skills: Skills, pages: Pages) -> APIRouter:
             return pages.problem(request, error, key="skill_name_taken", status_code=409)
         return SkillDetailsOut.of_details(skill)
 
-    @router.get("/api/skills/{skill}")
-    def get_skill(_: CurrentUser, skill: str) -> SkillDetailsOut:
-        return SkillDetailsOut.of_details(found(skill))
+    @router.get("/api/skills/{skill}", response_model=SkillUsedOut | SkillDetailsOut)
+    def get_skill(user: CurrentUser, skill: str) -> SkillDetailsOut:
+        shown = SkillDetailsOut.of_details(found(skill))
+        if user.role != Role.ADMINISTRATOR:
+            return shown
+        used_by = [UsingProjectOut(name=p.name, owner=p.owner) for p in skills.used_by(skill)]
+        return SkillUsedOut(used_by=used_by, **shown.model_dump())
 
     @router.put("/api/skills/{skill}", response_model=SkillDetailsOut)
     def replace_skill(
@@ -147,8 +165,14 @@ def skills_routes(skills: Skills, pages: Pages) -> APIRouter:
     def delete_skill(request: Request, _: CurrentAdministrator, skill: str) -> Response:
         try:
             deleted = skills.delete(skill)
-        except SkillInUse:
-            return pages.problem(request, "in_use", key="skill_in_use", status_code=409)
+        except SkillInUse as in_use:
+            return pages.problem(
+                request,
+                "in_use",
+                key="skill_in_use",
+                status_code=409,
+                projects=using(in_use.projects),
+            )
         if not deleted:
             raise HTTPException(404)
         return Response(status_code=204)

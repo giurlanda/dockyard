@@ -143,21 +143,86 @@ def test_creation_with_a_skill_that_does_not_exist_is_refused(
     assert dockyard.get("/api/projects", headers=user).json() == []
 
 
-def test_a_skill_a_project_uses_cannot_be_deleted(
+def test_a_skill_projects_use_cannot_be_deleted_and_the_refusal_names_them(
+    dockyard: TestClient, administrator: dict[str, str], user: dict[str, str], review: str
+) -> None:
+    create(dockyard, user, name="Rusty", skills=[review])
+    create(dockyard, administrator, name="Mine", skills=[review])
+
+    refused = dockyard.delete(f"/api/skills/{review}", headers=administrator)
+    from_page = dockyard.post(f"/skills/{review}/delete", headers=administrator)
+
+    assert refused.status_code == 409
+    assert refused.json()["error"] == "in_use"
+    assert f"Rusty ({USER})" in refused.json()["message"]
+    assert f"Mine ({ADMINISTRATOR})" in refused.json()["message"]
+    assert from_page.status_code == 409
+    assert "the Projects listed below use it" in from_page.text
+    assert "Rusty" in from_page.text
+    assert dockyard.get(f"/api/skills/{review}", headers=user).status_code == 200
+
+
+def test_an_administrator_sees_which_projects_use_a_skill_and_whose_they_are(
+    dockyard: TestClient, administrator: dict[str, str], user: dict[str, str], review: str
+) -> None:
+    create(dockyard, user, name="Rusty", skills=[review])
+
+    shown = dockyard.get(f"/api/skills/{review}", headers=administrator).json()
+    page = dockyard.get(f"/skills/{review}", headers=administrator).text
+
+    assert shown["used_by"] == [{"name": "Rusty", "owner": USER}]
+    assert "Rusty" in page
+    assert USER in page
+    assert f"/skills/{review}/delete" not in page
+
+
+def test_users_who_are_not_administrators_do_not_see_which_projects_use_a_skill(
+    dockyard: TestClient, administrator: dict[str, str], user: dict[str, str], review: str
+) -> None:
+    create(dockyard, administrator, name="Mine", skills=[review])
+
+    shown = dockyard.get(f"/api/skills/{review}", headers=user).json()
+    page = dockyard.get(f"/skills/{review}", headers=user).text
+
+    assert "used_by" not in shown
+    assert "Mine" not in page
+    assert ADMINISTRATOR not in page
+
+
+def test_a_skill_is_free_once_its_last_project_drops_it(
+    dockyard: TestClient, administrator: dict[str, str], user: dict[str, str], review: str
+) -> None:
+    first = create(dockyard, user, name="First", skills=[review]).json()["id"]
+    last = create(dockyard, user, name="Last", skills=[review]).json()["id"]
+
+    assert change_skills(dockyard, user, first, []).status_code == 200
+
+    assert dockyard.delete(f"/api/skills/{review}", headers=administrator).status_code == 409
+
+    assert change_skills(dockyard, user, last, []).status_code == 200
+
+    assert dockyard.get(f"/api/skills/{review}", headers=administrator).json()["used_by"] == []
+    assert dockyard.delete(f"/api/skills/{review}", headers=administrator).status_code == 204
+
+
+def test_a_skill_is_free_once_its_last_project_is_deleted(
     dockyard: TestClient, administrator: dict[str, str], user: dict[str, str], review: str
 ) -> None:
     project = create(dockyard, user, skills=[review]).json()["id"]
 
-    refused = dockyard.delete(f"/api/skills/{review}", headers=administrator)
-
-    assert refused.status_code == 409
-    assert refused.json()["error"] == "in_use"
-    from_page = dockyard.post(f"/skills/{review}/delete", headers=administrator)
-    assert from_page.status_code == 409
-    assert dockyard.get(f"/api/skills/{review}", headers=user).status_code == 200
-
     dockyard.delete(f"/api/projects/{project}", headers=user)
 
+    assert dockyard.delete(f"/api/skills/{review}", headers=administrator).status_code == 204
+
+
+def test_a_skill_is_free_once_the_owner_of_its_last_project_is_removed(
+    dockyard: TestClient, administrator: dict[str, str], user: dict[str, str], review: str
+) -> None:
+    create(dockyard, user, skills=[review])
+
+    assert dockyard.delete(f"/api/users/{USER}", headers=administrator).status_code == 204
+
+    assert dockyard.get(f"/api/skills/{review}", headers=administrator).json()["used_by"] == []
     assert dockyard.delete(f"/api/skills/{review}", headers=administrator).status_code == 204
 
 

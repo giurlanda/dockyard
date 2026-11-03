@@ -242,5 +242,5 @@ def images_routes(images: Images, pages: Pages) -> APIRouter:
 
 
 def using(projects: list[UsingProject]) -> str:
-    """The Projects using an Image, as a message lists them."""
+    """The Projects using an Image or a Skill, as a message lists them."""
     return ", ".join(f"{project.name} ({project.owner})" for project in projects)

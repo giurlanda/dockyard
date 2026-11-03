@@ -23,6 +23,7 @@ import yaml
 
 from . import runtime
 from .database import Database
+from .images import UsingProject
 
 UPLOAD_MAX_BYTES = 1024 * 1024
 DESCRIPTION_MAX_LENGTH = 1024  # Claude Code's limit
@@ -64,6 +65,10 @@ class SkillNameTaken(Exception):
 
 class SkillInUse(Exception):
     """Projects use the Skill: it cannot be deleted until none does."""
+
+    def __init__(self, projects: list[UsingProject]) -> None:
+        self.projects = projects
+        super().__init__(projects)
 
 
 @dataclass(frozen=True)
@@ -140,6 +145,11 @@ class Skills:
             ).fetchone()
         return _skill(row, files=_files(row["files"])) if row else None
 
+    def used_by(self, skill: str) -> list[UsingProject]:
+        """The Projects that use the Skill, of every User."""
+        with self._db.transaction() as conn:
+            return _projects_using(conn, skill)
+
     def delete(self, skill: str) -> bool:
         """False if not found.
 
@@ -147,9 +157,11 @@ class Skills:
         """
         try:
             with self._db.transaction() as conn:
+                if using := _projects_using(conn, skill):
+                    raise SkillInUse(using)
                 return conn.execute("DELETE FROM skills WHERE id = ?", (skill,)).rowcount > 0
-        except sqlite3.IntegrityError as error:  # a Project picked it
-            raise SkillInUse from error
+        except sqlite3.IntegrityError as error:  # a Project picked it meanwhile
+            raise SkillInUse(self.used_by(skill)) from error
 
 
 def _unpack(upload: bytes, file_name: str, unnamed: str | None = None) -> tuple[str, str, bytes]:
@@ -317,6 +329,16 @@ def _files(stored: bytes) -> tuple[SkillFile, ...]:
 
 
 _COLUMNS = "id, name, description, updated_at"
+
+
+def _projects_using(conn: sqlite3.Connection, skill: str) -> list[UsingProject]:
+    rows = conn.execute(
+        "SELECT name, (SELECT email FROM users WHERE runtime_id = owner) AS owner"
+        " FROM projects JOIN project_skills ON project = projects.id"
+        " WHERE skill = ? ORDER BY created_at, projects.rowid",
+        (skill,),
+    ).fetchall()
+    return [UsingProject(row["name"], row["owner"]) for row in rows]
 
 
 def _skill(row: sqlite3.Row, files: tuple[SkillFile, ...] = ()) -> Skill:
