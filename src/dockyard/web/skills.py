@@ -1,6 +1,6 @@
-"""Skills: Administrators upload and delete them; every User lists them and reads each one.
+"""Skills: Administrators upload, replace and delete them; every User lists them and reads each one.
 
-Uploading and deleting, and the page listing the catalog, are for Administrators only.
+Uploading, replacing and deleting, and the page listing the catalog, are for Administrators only.
 """
 
 from __future__ import annotations
@@ -56,10 +56,20 @@ class SkillDetailsOut(SkillOut):
 def skills_routes(skills: Skills, pages: Pages) -> APIRouter:
     router = APIRouter()
 
+    def uploaded(file: UploadFile) -> tuple[bytes, str]:
+        # One byte more than allowed is enough to refuse it: never read all of a huge upload.
+        return file.file.read(UPLOAD_MAX_BYTES + 1), file.filename or ""
+
     def create(file: UploadFile) -> Skill:
         """Raises SkillRefused, SkillNameTaken."""
-        # One byte more than allowed is enough to refuse it: never read all of a huge upload.
-        return skills.create(file.file.read(UPLOAD_MAX_BYTES + 1), file.filename or "")
+        return skills.create(*uploaded(file))
+
+    def replace(skill: str, file: UploadFile) -> Skill:
+        """Raises SkillRefused, HTTPException."""
+        replaced = skills.replace(skill, *uploaded(file))
+        if replaced is None:
+            raise HTTPException(404)
+        return replaced
 
     def refused(request: Request, refusal: SkillRefused) -> Response:
         return pages.problem(
@@ -76,6 +86,25 @@ def skills_routes(skills: Skills, pages: Pages) -> APIRouter:
             user=user,
             skills=skills.list_all(),
             problem=problem,
+        )
+
+    def skill_page(
+        request: Request,
+        user: User,
+        skill: str,
+        *,
+        problem: str | None = None,
+        replace_problem: str | None = None,
+        status_code: int = 200,
+    ) -> HTMLResponse:
+        return pages.render(
+            request,
+            "skill.html",
+            status_code=status_code,
+            user=user,
+            skill=found(skill),
+            problem=problem,
+            replace_problem=replace_problem,
         )
 
     def found(skill: str) -> Skill:
@@ -105,6 +134,15 @@ def skills_routes(skills: Skills, pages: Pages) -> APIRouter:
     def get_skill(_: CurrentUser, skill: str) -> SkillDetailsOut:
         return SkillDetailsOut.of_details(found(skill))
 
+    @router.put("/api/skills/{skill}", response_model=SkillDetailsOut)
+    def replace_skill(
+        request: Request, _: CurrentAdministrator, skill: str, file: Annotated[UploadFile, File()]
+    ) -> object:
+        try:
+            return SkillDetailsOut.of_details(replace(skill, file))
+        except SkillRefused as refusal:
+            return refused(request, refusal)
+
     @router.delete("/api/skills/{skill}", status_code=204)
     def delete_skill(request: Request, _: CurrentAdministrator, skill: str) -> Response:
         try:
@@ -133,23 +171,29 @@ def skills_routes(skills: Skills, pages: Pages) -> APIRouter:
         return RedirectResponse(f"/skills/{skill.id}", status_code=303)
 
     @router.get("/skills/{skill}", response_class=HTMLResponse)
-    def skill_page(request: Request, user: CurrentUser, skill: str) -> HTMLResponse:
-        return pages.render(request, "skill.html", user=user, skill=found(skill), problem=None)
+    def read_page(request: Request, user: CurrentUser, skill: str) -> HTMLResponse:
+        return skill_page(request, user, skill)
+
+    @router.post("/skills/{skill}/replace", response_model=None)
+    def replace_from_page(
+        request: Request,
+        user: CurrentAdministrator,
+        skill: str,
+        file: Annotated[UploadFile, File()],
+    ) -> Response:
+        try:
+            replace(skill, file)
+        except SkillRefused as refusal:
+            problem = f"skill_refused.{refusal.reason}.body"
+            return skill_page(request, user, skill, replace_problem=problem, status_code=422)
+        return RedirectResponse(f"/skills/{skill}", status_code=303)
 
     @router.post("/skills/{skill}/delete", response_model=None)
     def delete_from_page(request: Request, user: CurrentAdministrator, skill: str) -> Response:
         try:
             deleted = skills.delete(skill)
         except SkillInUse:
-            problem = "skill.in_use_refused"
-            return pages.render(
-                request,
-                "skill.html",
-                status_code=409,
-                user=user,
-                skill=found(skill),
-                problem=problem,
-            )
+            return skill_page(request, user, skill, problem="skill.in_use_refused", status_code=409)
         if not deleted:
             raise HTTPException(404)
         return RedirectResponse("/skills", status_code=303)

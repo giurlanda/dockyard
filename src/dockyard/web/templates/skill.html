@@ -25,6 +25,21 @@
     {% endfor %}
   </section>
   {% if user.role == "administrator" %}
+    <section class="panel" aria-labelledby="replace">
+      <h2 id="replace">{{ t("skill.replace.heading") }}</h2>
+      <p class="muted">{{ t("skill.replace.explain") }}</p>
+      {% if replace_problem %}<p class="outcome bad" role="alert">{{ t(replace_problem) }}</p>{% endif %}
+      <form class="fields" method="post" action="/skills/{{ skill.id }}/replace"
+            enctype="multipart/form-data">
+        <div class="field">
+          <label for="file">{{ t("skills.upload.file") }}</label>
+          <input id="file" name="file" type="file" accept=".md,.zip,text/markdown,application/zip"
+                 aria-describedby="file-hint" required>
+          <p class="hint muted" id="file-hint">{{ t("skills.upload.hint") }}</p>
+        </div>
+        <div class="actions"><button class="primary">{{ t("skill.replace.button") }}</button></div>
+      </form>
+    </section>
     <section class="panel" aria-labelledby="delete">
       <h2 id="delete">{{ t("skill.delete.heading") }}</h2>
       {% if problem %}<p class="outcome bad" role="alert">{{ t(problem) }}</p>{% endif %}
