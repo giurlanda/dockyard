@@ -14,7 +14,7 @@ from dockyard.runtime import GitToken, ProjectStatus, Runtime
 
 from .conftest import PUBLIC_REPOSITORY, new_project, wait_until
 from .test_clone import finished
-from .test_project_environment import cloned, server_ready
+from .test_project_environment import cloned, reported, server_ready
 
 TOKEN = "github_pat_11DOCKYARD0never0on0disk"
 
@@ -71,11 +71,26 @@ def test_a_project_mounts_only_its_own_volumes_and_the_users_claude_config(
     runtime.start_project(user, project, name="Hello", permission_mode="default")
 
     mounts = environment_of(docker_daemon, project).attrs["Mounts"]
-    assert {(m["Type"], m["Name"], m["Destination"]) for m in mounts} == {
-        ("volume", f"dockyard-code-{project}", f"/workspace/{project}"),
-        ("volume", f"dockyard-home-{project}", "/home/ubuntu"),
-        ("volume", f"dockyard-claude-config-{user}", "/home/ubuntu/.claude"),
+    assert {(m["Type"], m["Name"], m["Destination"], m["RW"]) for m in mounts} == {
+        ("volume", f"dockyard-code-{project}", f"/workspace/{project}", True),
+        ("volume", f"dockyard-home-{project}", "/home/ubuntu", True),
+        ("volume", f"dockyard-claude-config-{user}", "/home/ubuntu/.claude", True),
+        ("volume", f"dockyard-skills-{project}", "/home/ubuntu/.claude/skills", False),
     }
+
+
+def test_a_projects_skills_volume_carries_its_labels_like_its_other_volumes(
+    runtime: Runtime, new_user: Callable[[], str], docker_daemon: docker.DockerClient
+) -> None:
+    user = new_user()
+    project = cloned(runtime, user)
+
+    runtime.start_project(user, project, name="Hello", permission_mode="default")
+
+    labels = {"dockyard.user": user, "dockyard.project": project}
+    for kind in ("code", "home", "skills"):
+        volume = docker_daemon.volumes.get(f"dockyard-{kind}-{project}")
+        assert volume.attrs["Labels"] == {**labels, "dockyard.kind": kind}
 
 
 def test_the_projects_network_exists_once_dockyard_has_started(
@@ -137,3 +152,20 @@ def test_a_projects_address_and_its_gateway_are_in_dockers_networks(
 
     for address in (attached["IPAddress"], attached["Gateway"]):
         assert any(ipaddress.ip_address(address) in network for network in networks), address
+
+
+def test_an_image_writing_into_the_skills_folder_does_not_reach_it(
+    runtime: Runtime, new_user: Callable[[], str], new_image: Callable[[], str]
+) -> None:
+    """Docker would copy what the Image holds there into the empty skills volume."""
+    image = new_image()
+    folder = "/home/ubuntu/.claude/skills/from-image"
+    assert runtime.build_image(
+        image, f"RUN mkdir -p {folder} && echo hi > {folder}/SKILL.md", output=lambda _: None
+    )
+    user = new_user()
+    project = cloned(runtime, user)
+
+    runtime.start_project(user, project, name="Hello", permission_mode="default", image=image)
+
+    assert reported(server_ready(runtime, project), "skills") == ""

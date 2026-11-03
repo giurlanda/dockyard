@@ -358,3 +358,25 @@ def terminal_processes(request: pytest.FixtureRequest) -> TerminalProcesses:
         return processes
 
     return count
+
+
+SkillsKept = Callable[[Runtime, str], bool]
+
+
+@pytest.fixture
+def skills_kept(request: pytest.FixtureRequest) -> SkillsKept:
+    """Whether the Runtime still keeps Skills for the Project, running or not."""
+    if request.node.callspec.params["make_runtime"] == "fake":
+
+        def kept_in_fake(runtime: Runtime, project: str) -> bool:
+            assert isinstance(runtime, FakeRuntime)
+            return runtime.skills(project) is not None
+
+        return kept_in_fake
+    daemon: docker.DockerClient = request.getfixturevalue("docker_daemon")
+
+    def kept(runtime: Runtime, project: str) -> bool:
+        labels = [f"dockyard.project={project}", "dockyard.kind=skills"]
+        return bool(daemon.volumes.list(filters={"label": labels}))
+
+    return kept

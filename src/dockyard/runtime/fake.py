@@ -31,6 +31,7 @@ from . import (
     ProjectNotRunning,
     ProjectStatus,
     RuntimeUnavailable,
+    Skill,
     Stats,
     Tty,
     project_path,
@@ -183,6 +184,13 @@ class FakeRuntime:
             server = self._projects[project].server
         return server.terminal_processes() if server else 0
 
+    def skills(self, project: str) -> tuple[Skill, ...] | None:
+        """The Skills the Project's environment last started with; None before it first started,
+        and once the Project is removed."""
+        with self._lock:
+            found = self._projects.get(project)
+            return found.skills if found else None
+
     def watching(self, project: str) -> int:
         """How many follow the Project's server: its log and its console."""
         with self._lock:
@@ -302,6 +310,7 @@ class FakeRuntime:
         memory: int = PROJECT_MEMORY,
         privileged: bool = False,
         image: str | None = None,
+        skills: Sequence[Skill] = (),
     ) -> None:
         self.check_reachable()
         with self._lock:
@@ -313,6 +322,7 @@ class FakeRuntime:
             found.files = dict(self._images[image].files) if image else {}
             found.build = image or self._base()
             found.privileged = privileged
+            found.skills = tuple(skills)
             self._trusted.setdefault(user, set()).add(project_path(project))
             found.command = (
                 f"remote-control --name={name} --spawn worktree --permission-mode {permission_mode}"
@@ -405,6 +415,7 @@ class FakeRuntime:
             if found:
                 found.clone = None
                 found.server = None
+                found.skills = None
                 if code:
                     found.code = False
                     found.starts = 0  # its home goes with its code
@@ -534,6 +545,9 @@ class FakeRuntime:
                 f"cpu limit: {round(cpus * 100000)} 100000",
                 f"dns: {' '.join(self._dns)}",
                 "anthropic environment: ",
+                f"skills: {'; '.join(_skill_files(found.skills or ()))}",
+                "skills writable: no",
+                "claude config writable: yes",
             ]
 
     def _restart(self, project: str, server: _Server) -> None:
@@ -570,6 +584,7 @@ class _Project:
     privileged: bool = False  # its environment runs privileged
     launches: int = 0  # how many times its environment started, by Dockyard or by itself
     git_token: GitToken | None = None  # what its tmpfs holds, written since it last started
+    skills: tuple[Skill, ...] | None = None  # what its environment last started with
     files: dict[str, str] = field(default_factory=dict)  # what its Image's instructions wrote
     build: str = ""  # the build its environment runs: of an Image, or of the Base Image
 
@@ -892,6 +907,15 @@ class _Watcher:
     def close(self) -> None:
         self._program.detach(self)
         self.show(b"")
+
+
+def _skill_files(skills: tuple[Skill, ...]) -> list[str]:
+    """Each file of the Skills, as the stand-in reports it: path, mode and content."""
+    return sorted(
+        f"{skill.name}/{file.path} {755 if file.executable else 644} {file.content.decode()}"
+        for skill in skills
+        for file in skill.files
+    )
 
 
 def _instructions(dockerfile: str) -> list[str]:
