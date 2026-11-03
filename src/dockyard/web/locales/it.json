@@ -428,5 +428,13 @@
   "skill_refused.too_many_files.body": "Lo .zip ha più di 1000 voci.",
   "skill_refused.too_large_unpacked.body": "Lo .zip, scompattato, supera 10 MB.",
   "skill_refused.path_repeated.body": "Lo .zip ha lo stesso percorso due volte, o un file dove c'è una cartella.",
-  "skill_name_taken.body": "Un'altra Skill ha già questo nome: un nome indica una sola Skill nell'Istanza."
+  "skill_name_taken.body": "Un'altra Skill ha già questo nome: un nome indica una sola Skill nell'Istanza.",
+  "skill_in_use.body": "Alcuni Progetti usano questa Skill: si potrà eliminare quando nessuno la userà più.",
+  "skill.in_use_refused": "Questa Skill non può essere eliminata: alcuni Progetti la usano.",
+  "project_new.skills": "Skill",
+  "project_new.skills_hint": "Ciò che Claude Code può invocare in questo Progetto come /nome, qualunque sia la sua Immagine. Nessuna, se non ne scegli.",
+  "project_new.read_skill": "Leggila",
+  "project.skills": "Skill",
+  "project.no_skills": "Nessuna",
+  "project_refused.skill_not_found.body": "Una delle Skill scelte non esiste più: scegli tra le Skill proposte nel modulo del nuovo Progetto."
 }

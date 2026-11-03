@@ -2,12 +2,13 @@
 
 from __future__ import annotations
 
+import json
 import logging
 import re
 import sqlite3
 import threading
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from contextlib import nullcontext, suppress
 from dataclasses import dataclass, replace
 from enum import StrEnum
@@ -33,6 +34,8 @@ from .runtime import (
     Stats,
     Tty,
 )
+from .runtime import Skill as SkillToStart
+from .skills import Skill, unpacked
 
 log = logging.getLogger(__name__)
 
@@ -122,6 +125,7 @@ class Refusal(StrEnum):
     ACTIVE_MAXIMUM = "active_maximum"
     PRIVILEGED_NOT_PERMITTED = "privileged_not_permitted"
     IMAGE_NOT_AVAILABLE = "image_not_available"
+    SKILL_NOT_FOUND = "skill_not_found"
     CLONING = "cloning"
     NOT_RUNNING = "not_running"
     NOT_STOPPED = "not_stopped"
@@ -200,6 +204,7 @@ class Project:
     # It runs an older build of its Image than the one it would start from now: it moves to the
     # newer one when it starts again.
     update_available: bool = False
+    skills: tuple[Skill, ...] = ()  # what its environment gets at every start, sorted by name
 
 
 @dataclass(frozen=True)
@@ -224,6 +229,7 @@ class CloneReport:
     cpus: float | None = None
     memory: int | None = None  # bytes
     image: str = BASE_IMAGE
+    skills: tuple[str, ...] = ()  # ids
 
 
 class Projects:
@@ -265,13 +271,14 @@ class Projects:
         memory: int | None = None,
         privileged: bool = False,
         image: str = BASE_IMAGE,
+        skills: Sequence[str] = (),
     ) -> Project:
         """Record the Project and start cloning it, with its Git Credential if it has one; once
         cloned, it starts (or waits for its owner's Claude Account) in its `image`, which must be
-        ready. It may use `cpus` CPUs and `memory` bytes of RAM, within the Instance limits:
-        their maximum when not given. It is active from now on, so the owner must have fewer
-        active Projects than the maximum. A `privileged` one needs its owner to hold the
-        permission to create Privileged Projects.
+        ready, with its `skills` (ids in the catalog). It may use `cpus` CPUs and `memory` bytes
+        of RAM, within the Instance limits: their maximum when not given. It is active from now
+        on, so the owner must have fewer active Projects than the maximum. A `privileged` one
+        needs its owner to hold the permission to create Privileged Projects.
 
         Raises ProjectRefused, RuntimeUnavailable.
         """
@@ -288,6 +295,9 @@ class Projects:
             raise ProjectRefused(Refusal.PRIVILEGED_NOT_PERMITTED)
         if not self._image_ready(image):
             raise ProjectRefused(Refusal.IMAGE_NOT_AVAILABLE)
+        skills = list(dict.fromkeys(skills))
+        if not self._skills_exist(skills):
+            raise ProjectRefused(Refusal.SKILL_NOT_FOUND)
         try:
             with self._db.transaction() as conn:
                 # Counted and recorded in one statement: two creations at once cannot both pass.
@@ -313,9 +323,16 @@ class Projects:
                         self.limits.max_active,
                     ),
                 ).fetchone()
-        except sqlite3.IntegrityError as error:  # its Git Credential or Image deleted meanwhile
+                if created:
+                    conn.executemany(
+                        "INSERT INTO project_skills (project, skill) VALUES (?, ?)",
+                        [(created[0], skill) for skill in skills],
+                    )
+        except sqlite3.IntegrityError as error:  # its Git Credential, Image or a Skill deleted
             if not self._image_ready(image):
                 raise ProjectRefused(Refusal.IMAGE_NOT_AVAILABLE) from error
+            if not self._skills_exist(skills):
+                raise ProjectRefused(Refusal.SKILL_NOT_FOUND) from error
             raise ProjectRefused(Refusal.GIT_CREDENTIAL_NOT_FOUND) from error
         if created is None:
             raise ProjectRefused(Refusal.ACTIVE_MAXIMUM)
@@ -339,6 +356,7 @@ class Projects:
                 cpus=cpus,
                 memory=memory,
                 image=image,
+                skills=tuple(skills),
             ),
         )
         return Project(
@@ -354,6 +372,7 @@ class Projects:
             memory,
             privileged,
             image,
+            skills=self._skills(project),
         )
 
     def list_all(self) -> list[OwnedProject]:
@@ -585,6 +604,7 @@ class Projects:
                         cpus=row["cpus"],
                         memory=row["memory"],
                         image=row["image"] or BASE_IMAGE,
+                        skills=tuple(skill.id for skill in self._skills(row["id"])),
                     ),
                 )
         for (owner,) in revoked:  # stopped before, unless Dockyard stopped first
@@ -663,6 +683,7 @@ class Projects:
                         memory=min(row["memory"], self.limits.max_memory),
                         privileged=bool(row["privileged"]),
                         image=_build_to_start(row),
+                        skills=self._skills_to_start(row["id"]),
                     )
                 if row["git_credential"]:
                     start = self._runtime.project_starts().get(row["id"])
@@ -874,6 +895,36 @@ class Projects:
             row = conn.execute("SELECT build FROM images WHERE id = ?", (image,)).fetchone()
         return bool(row and row["build"])  # it passed its check: even if built again since
 
+    def _skills_exist(self, skills: Sequence[str]) -> bool:
+        with self._db.transaction() as conn:
+            # One parameter, however many ids: SQLite limits how many a statement takes.
+            found = conn.execute(
+                "SELECT count(*) FROM skills WHERE id IN (SELECT value FROM json_each(?))",
+                (json.dumps(list(skills)),),
+            ).fetchone()[0]
+        return bool(found == len(skills))
+
+    def _skills(self, project: str) -> tuple[Skill, ...]:
+        with self._db.transaction() as conn:
+            rows = conn.execute(
+                "SELECT id, name, description, updated_at FROM skills"
+                " JOIN project_skills ON skill = id WHERE project = ? ORDER BY name",
+                (project,),
+            ).fetchall()
+        return tuple(
+            Skill(row["id"], row["name"], row["description"], row["updated_at"]) for row in rows
+        )
+
+    def _skills_to_start(self, project: str) -> tuple[SkillToStart, ...]:
+        """The Project's Skills with their files as they are now."""
+        with self._db.transaction() as conn:
+            rows = conn.execute(
+                "SELECT name, files FROM skills JOIN project_skills ON skill = id"
+                " WHERE project = ?",
+                (project,),
+            ).fetchall()
+        return tuple(SkillToStart(row["name"], unpacked(row["files"])) for row in rows)
+
     def _permitted(self, owner: str) -> bool:
         """Whether the owner holds the permission to create Privileged Projects."""
         with self._db.transaction() as conn:
@@ -919,6 +970,7 @@ class Projects:
             privileged=bool(row["privileged"]),
             image=row["image"] or BASE_IMAGE,
             update_available=outdated,
+            skills=self._skills(row["id"]),
         )
 
 
