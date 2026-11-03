@@ -92,19 +92,35 @@ def test_an_administrator_replaces_a_skill_and_it_keeps_its_identity(
 def test_a_replacement_declaring_another_name_is_refused(
     dockyard: TestClient, administrator: dict[str, str], review: str
 ) -> None:
-    renamed = replace(dockyard, administrator, review, IMPROVED.replace("name: review", "name: x"))
-    from_file_name = replace(dockyard, administrator, review, RELEASE, "release.md")
-    italian = replace(dockyard, {**administrator, **ITALIAN}, review, RELEASE, "release.md")
+    renamed = IMPROVED.replace("name: review", "name: x")
 
-    for refused in (renamed, from_file_name):
-        assert refused.status_code == 422
-        assert refused.json()["error"] == "name_differs"
-        assert "another name" in refused.json()["message"]
+    refused = replace(dockyard, administrator, review, renamed)
+    italian = replace(dockyard, {**administrator, **ITALIAN}, review, renamed)
+
+    assert refused.status_code == 422
+    assert refused.json()["error"] == "name_differs"
+    assert "another name" in refused.json()["message"]
     assert "nome diverso" in italian.json()["message"]
     assert (
         dockyard.get(f"/api/skills/{review}", headers=administrator).json()["files"][0]["content"]
         == REVIEW
     )
+
+
+def test_a_replacement_declaring_no_name_keeps_the_skills_whatever_its_file_name(
+    dockyard: TestClient, administrator: dict[str, str], review: str
+) -> None:
+    unnamed = "---\ndescription: Review, unnamed.\n---\nRead the diff.\n"
+    folder = archive(("SKILL.md", unnamed.encode()))
+    zipped = {"file": ("anything.zip", folder, "application/zip")}
+
+    from_markdown = replace(dockyard, administrator, review, unnamed, "review-v2.md")
+    from_zip = dockyard.put(f"/api/skills/{review}", files=zipped, headers=administrator)
+
+    for replaced in (from_markdown, from_zip):
+        assert replaced.status_code == 200, replaced.text
+        assert replaced.json()["name"] == "review"
+        assert replaced.json()["description"] == "Review, unnamed."
 
 
 def test_a_replacement_is_validated_as_an_upload(
@@ -205,10 +221,11 @@ def test_an_administrator_replaces_a_skill_from_its_page(
 def test_the_page_says_why_a_replacement_is_refused(
     dockyard: TestClient, administrator: dict[str, str], review: str
 ) -> None:
-    files = {"file": ("release.md", RELEASE.encode(), "text/markdown")}
+    renamed = IMPROVED.replace("name: review", "name: x")
+    files = {"file": ("review.md", renamed.encode(), "text/markdown")}
 
     refused = dockyard.post(f"/skills/{review}/replace", files=files, headers=administrator)
 
     assert refused.status_code == 422
     assert "declares another name" in refused.text
-    assert "Tag, then publish." not in refused.text
+    assert "Run the tests, then read the diff." not in refused.text
