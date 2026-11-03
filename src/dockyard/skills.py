@@ -49,6 +49,7 @@ class Refusal(StrEnum):
     TOO_MANY_FILES = "too_many_files"
     TOO_LARGE_UNPACKED = "too_large_unpacked"
     PATH_REPEATED = "path_repeated"
+    NAME_DIFFERS = "name_differs"  # a replacement never renames what Users invoke
 
 
 class SkillRefused(Exception):
@@ -101,6 +102,30 @@ class Skills:
                 ).fetchone()
         except sqlite3.IntegrityError as error:
             raise SkillNameTaken from error
+        return _skill(row, files=_files(files))
+
+    def replace(self, skill: str, upload: bytes, file_name: str) -> Skill | None:
+        """Replace the Skill's files with the uploaded Markdown file or .zip, of the same name: its
+        revision moves on, and the Projects using it get the new files at their next start. None if
+        not found.
+
+        Raises SkillRefused.
+        """
+        name, description, files = _unpack(upload, file_name)
+        with self._db.transaction() as conn:
+            row = conn.execute(
+                "UPDATE skills SET description = ?, files = ?, revision = revision + 1,"
+                " updated_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now')"
+                f" WHERE id = ? AND name = ? RETURNING {_COLUMNS}",
+                (description, files, skill, name),
+            ).fetchone()
+            exists = row is not None or bool(
+                conn.execute("SELECT 1 FROM skills WHERE id = ?", (skill,)).fetchone()
+            )
+        if row is None:
+            if exists:
+                raise SkillRefused(Refusal.NAME_DIFFERS)
+            return None
         return _skill(row, files=_files(files))
 
     def list_all(self) -> list[Skill]:
