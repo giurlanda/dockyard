@@ -189,6 +189,16 @@ MIGRATIONS = (
         updated_at  TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
     );
     """,
+    # The Skills each Project picked. A Skill cannot be deleted while a Project uses it; a
+    # Project's go with it.
+    """
+    CREATE TABLE project_skills (
+        project TEXT NOT NULL REFERENCES projects (id) ON DELETE CASCADE,
+        skill   TEXT NOT NULL REFERENCES skills (id),
+        PRIMARY KEY (project, skill)
+    );
+    CREATE INDEX project_skills_skill ON project_skills (skill);
+    """,
 )
 
 

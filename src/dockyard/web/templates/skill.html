@@ -27,6 +27,7 @@
   {% if user.role == "administrator" %}
     <section class="panel" aria-labelledby="delete">
       <h2 id="delete">{{ t("skill.delete.heading") }}</h2>
+      {% if problem %}<p class="outcome bad" role="alert">{{ t(problem) }}</p>{% endif %}
       <form method="post" action="/skills/{{ skill.id }}/delete">
         <div class="actions"><button class="danger">{{ t("skill.delete.button") }}</button></div>
       </form>

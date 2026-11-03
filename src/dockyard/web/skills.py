@@ -13,7 +13,7 @@ from pydantic import BaseModel
 from starlette.responses import Response
 
 from ..accounts import User
-from ..skills import UPLOAD_MAX_BYTES, Skill, SkillNameTaken, SkillRefused, Skills
+from ..skills import UPLOAD_MAX_BYTES, Skill, SkillInUse, SkillNameTaken, SkillRefused, Skills
 from .guard import CurrentAdministrator, CurrentUser
 from .pages import Pages
 
@@ -106,8 +106,12 @@ def skills_routes(skills: Skills, pages: Pages) -> APIRouter:
         return SkillDetailsOut.of_details(found(skill))
 
     @router.delete("/api/skills/{skill}", status_code=204)
-    def delete_skill(_: CurrentAdministrator, skill: str) -> Response:
-        if not skills.delete(skill):
+    def delete_skill(request: Request, _: CurrentAdministrator, skill: str) -> Response:
+        try:
+            deleted = skills.delete(skill)
+        except SkillInUse:
+            return pages.problem(request, "in_use", key="skill_in_use", status_code=409)
+        if not deleted:
             raise HTTPException(404)
         return Response(status_code=204)
 
@@ -130,11 +134,23 @@ def skills_routes(skills: Skills, pages: Pages) -> APIRouter:
 
     @router.get("/skills/{skill}", response_class=HTMLResponse)
     def skill_page(request: Request, user: CurrentUser, skill: str) -> HTMLResponse:
-        return pages.render(request, "skill.html", user=user, skill=found(skill))
+        return pages.render(request, "skill.html", user=user, skill=found(skill), problem=None)
 
     @router.post("/skills/{skill}/delete", response_model=None)
-    def delete_from_page(_: CurrentAdministrator, skill: str) -> Response:
-        if not skills.delete(skill):
+    def delete_from_page(request: Request, user: CurrentAdministrator, skill: str) -> Response:
+        try:
+            deleted = skills.delete(skill)
+        except SkillInUse:
+            problem = "skill.in_use_refused"
+            return pages.render(
+                request,
+                "skill.html",
+                status_code=409,
+                user=user,
+                skill=found(skill),
+                problem=problem,
+            )
+        if not deleted:
             raise HTTPException(404)
         return RedirectResponse("/skills", status_code=303)
 

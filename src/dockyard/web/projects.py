@@ -13,7 +13,7 @@ from typing import Annotated, Literal
 from urllib.parse import urlencode
 
 import anyio
-from fastapi import APIRouter, Form, HTTPException, Request, WebSocket
+from fastapi import APIRouter, Form, HTTPException, Query, Request, WebSocket
 from fastapi.responses import HTMLResponse, RedirectResponse
 from pydantic import BaseModel
 from starlette.responses import Response
@@ -36,6 +36,7 @@ from ..projects import (
 )
 from ..providers import Provider
 from ..runtime import CloneState, Output, RuntimeUnavailable, Stats
+from ..skills import Skills
 from .guard import CurrentUser, websocket_close_code
 from .pages import Pages
 from .terminal import bridge, show
@@ -56,10 +57,17 @@ class NewProject(BaseModel):
     memory: int | None = None  # bytes. None: the most the Instance allows
     privileged: bool = False  # only for a User holding the permission
     image: str = BASE_IMAGE  # the id of a ready Image
+    skills: list[str] = []  # ids of Skills in the catalog
 
 
 class ProjectChange(BaseModel):
     image: str  # the id of a ready Image; only while the Project is stopped
+
+
+class ProjectSkillOut(BaseModel):
+    id: str
+    name: str
+    description: str
 
 
 class ProjectOut(BaseModel):
@@ -77,6 +85,7 @@ class ProjectOut(BaseModel):
     image: str  # its id
     # It runs an older build of its Image: restarting it moves it to the newer one.
     update_available: bool
+    skills: list[ProjectSkillOut]
 
     @classmethod
     def of(cls, project: Project) -> ProjectOut:
@@ -94,6 +103,10 @@ class ProjectOut(BaseModel):
             privileged=project.privileged,
             image=project.image,
             update_available=project.update_available,
+            skills=[
+                ProjectSkillOut(id=skill.id, name=skill.name, description=skill.description)
+                for skill in project.skills
+            ],
         )
 
 
@@ -116,7 +129,11 @@ class StatsOut(BaseModel):
 
 
 def projects_routes(
-    projects: Projects, git_credentials: GitCredentials, images: Images, pages: Pages
+    projects: Projects,
+    git_credentials: GitCredentials,
+    images: Images,
+    skills: Skills,
+    pages: Pages,
 ) -> APIRouter:
     router = APIRouter()
 
@@ -154,6 +171,7 @@ def projects_routes(
         cpus: str = "",  # "": the most the Instance allows
         memory: str = "",  # in GiB. "": the most the Instance allows
         image: str = BASE_IMAGE,
+        picked: list[str] | None = None,  # Skill ids
         problem: str | None = None,
         status_code: int = 200,
     ) -> HTMLResponse:
@@ -176,6 +194,8 @@ def projects_routes(
             limits=limits,
             images=images.ready(),
             image=image,
+            skills=skills.list_all(),
+            picked=picked or [],
             problem=problem,
         )
 
@@ -204,6 +224,7 @@ def projects_routes(
                 memory=new.memory,
                 privileged=new.privileged,
                 image=new.image,
+                skills=new.skills,
             )
         except ProjectRefused as refusal:
             return refused(request, refusal)
@@ -283,6 +304,7 @@ def projects_routes(
         cpus: str = "",
         memory: str = "",
         image: str = BASE_IMAGE,
+        skills: Annotated[list[str] | None, Query()] = None,
     ) -> HTMLResponse:
         return new_project_page(
             request,
@@ -294,6 +316,7 @@ def projects_routes(
             cpus=cpus,
             memory=memory,
             image=image,
+            picked=skills,
         )
 
     @router.post("/projects", response_model=None)
@@ -309,6 +332,7 @@ def projects_routes(
         memory: Annotated[str, Form()] = "",  # in GiB. "": the most the Instance allows
         privileged: Annotated[bool, Form()] = False,
         image: Annotated[str, Form()] = BASE_IMAGE,
+        skills: Annotated[list[str] | None, Form()] = None,  # Skill ids; none picked by default
     ) -> Response:
         try:
             chosen_memory = _amount(memory, Refusal.MEMORY_OUT_OF_RANGE)
@@ -323,6 +347,7 @@ def projects_routes(
                 memory=None if chosen_memory is None else round(chosen_memory * GIB),
                 privileged=privileged,
                 image=image,
+                skills=skills or [],
             )
         except ProjectRefused as refusal:
             return new_project_page(
@@ -336,6 +361,7 @@ def projects_routes(
                 cpus=cpus,
                 memory=memory,
                 image=image,
+                picked=skills,
                 problem=f"project_refused.{refusal.reason}.body",
                 status_code=403 if refusal.reason == Refusal.PRIVILEGED_NOT_PERMITTED else 422,
             )
@@ -495,5 +521,6 @@ def _retry(report: CloneReport) -> str:
         "cpus": "" if report.cpus is None else _number(report.cpus),
         "memory": "" if report.memory is None else _number(report.memory / GIB),
         "image": report.image,
+        "skills": report.skills,
     }
-    return "/projects/new?" + urlencode(filled)
+    return "/projects/new?" + urlencode(filled, doseq=True)

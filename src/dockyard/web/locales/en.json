@@ -428,5 +428,13 @@
   "skill_refused.too_many_files.body": "The .zip has more than 1000 entries.",
   "skill_refused.too_large_unpacked.body": "The .zip, unpacked, is larger than 10 MB.",
   "skill_refused.path_repeated.body": "The .zip has the same path twice, or a file where a folder is.",
-  "skill_name_taken.body": "Another Skill already has this name: a name means one Skill on the Instance."
+  "skill_name_taken.body": "Another Skill already has this name: a name means one Skill on the Instance.",
+  "skill_in_use.body": "Projects use this Skill: it can be deleted once none does.",
+  "skill.in_use_refused": "This Skill cannot be deleted: Projects use it.",
+  "project_new.skills": "Skills",
+  "project_new.skills_hint": "What Claude Code can invoke in this Project as /name, whatever its Image. None unless you pick some.",
+  "project_new.read_skill": "Read it",
+  "project.skills": "Skills",
+  "project.no_skills": "None",
+  "project_refused.skill_not_found.body": "One of the Skills picked no longer exists: pick among the Skills offered on the new Project form."
 }

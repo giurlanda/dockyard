@@ -21,6 +21,7 @@ from pathlib import PurePosixPath
 
 import yaml
 
+from . import runtime
 from .database import Database
 
 UPLOAD_MAX_BYTES = 1024 * 1024
@@ -58,6 +59,10 @@ class SkillRefused(Exception):
 
 class SkillNameTaken(Exception):
     """Another Skill has the name: `/name` must mean one Skill on the Instance."""
+
+
+class SkillInUse(Exception):
+    """Projects use the Skill: it cannot be deleted until none does."""
 
 
 @dataclass(frozen=True)
@@ -112,9 +117,15 @@ class Skills:
         return _skill(row, files=_files(row["files"])) if row else None
 
     def delete(self, skill: str) -> bool:
-        """False if not found."""
-        with self._db.transaction() as conn:
-            return conn.execute("DELETE FROM skills WHERE id = ?", (skill,)).rowcount > 0
+        """False if not found.
+
+        Raises SkillInUse.
+        """
+        try:
+            with self._db.transaction() as conn:
+                return conn.execute("DELETE FROM skills WHERE id = ?", (skill,)).rowcount > 0
+        except sqlite3.IntegrityError as error:  # a Project picked it
+            raise SkillInUse from error
 
 
 def _unpack(upload: bytes, file_name: str) -> tuple[str, str, bytes]:
@@ -256,18 +267,27 @@ def _folder(name: str, files: dict[str, tuple[bytes, bool]]) -> bytes:
     return archive.getvalue()
 
 
+def unpacked(stored: bytes) -> tuple[runtime.SkillFile, ...]:
+    """The Skill's files as stored, for a Project's environment."""
+    with zipfile.ZipFile(io.BytesIO(stored)) as folder:
+        return tuple(
+            runtime.SkillFile(
+                entry.filename.split("/", 1)[1],  # within the Skill's folder
+                folder.read(entry),
+                bool(_mode(entry) & 0o111),
+            )
+            for entry in folder.infolist()
+        )
+
+
 def _files(stored: bytes) -> tuple[SkillFile, ...]:
     files = []
-    with zipfile.ZipFile(io.BytesIO(stored)) as folder:
-        for entry in folder.infolist():
-            data = folder.read(entry)
-            try:
-                content: str | None = data.decode("utf-8")
-            except UnicodeDecodeError:
-                content = None
-            path = entry.filename.split("/", 1)[1]  # within the Skill's folder
-            executable = bool(_mode(entry) & 0o111)
-            files.append(SkillFile(path, len(data), content, executable))
+    for file in unpacked(stored):
+        try:
+            content: str | None = file.content.decode("utf-8")
+        except UnicodeDecodeError:
+            content = None
+        files.append(SkillFile(file.path, len(file.content), content, file.executable))
     return tuple(files)
 
 

@@ -64,6 +64,21 @@
           <p class="hint muted" id="image-{{ offered.id }}-hint">{{ t("images.base.description") if offered.base else offered.description }}</p>
         {% endfor %}
       </fieldset>
+      {% if skills %}
+        <fieldset class="field skills" aria-describedby="skills-hint">
+          <legend>{{ t("project_new.skills") }}</legend>
+          <p class="hint muted" id="skills-hint">{{ t("project_new.skills_hint") }}</p>
+          {% for offered in skills %}
+            <label class="check">
+              <input type="checkbox" name="skills" value="{{ offered.id }}"{{ " checked" if offered.id in picked }}
+                     aria-describedby="skill-{{ offered.id }}-hint">
+              {{ offered.name }}
+            </label>
+            <p class="hint muted" id="skill-{{ offered.id }}-hint">{{ offered.description }}
+              <a href="/skills/{{ offered.id }}" target="_blank" rel="noopener">{{ t("project_new.read_skill") }}</a></p>
+          {% endfor %}
+        </fieldset>
+      {% endif %}
       <fieldset class="field modes" aria-describedby="mode-hint">
         <legend>{{ t("project_new.permission_mode") }}</legend>
         <p class="hint muted" id="mode-hint">{{ t("project_new.permission_mode_hint") }}</p>
