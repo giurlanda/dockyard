@@ -68,7 +68,9 @@ def _serve(settings: Settings) -> int:
         runtime = DockerRuntime.from_env(base_image=settings.base_image, dns=settings.projects_dns)
         runtime.check_reachable()
         runtime.ensure_infrastructure()
-        instance = create_instance(settings, runtime, certificate=certificate)
+        # Dockyard's own Dockerfile keeps it.
+        release = os.environ.get("DOCKYARD_RELEASE", "")
+        instance = create_instance(settings, runtime, certificate=certificate, release=release)
     except RuntimeUnavailable as error:
         print(error, file=sys.stderr)
         return 1

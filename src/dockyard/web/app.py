@@ -108,8 +108,10 @@ def create_instance(
     signing_keys: SigningKeys | None = None,
     clock: Clock | None = None,
     certificate: Certificate | None = None,
+    release: str = "",
 ) -> Instance:
-    """certificate: the local listener's, when already read; else read from the data volume."""
+    """certificate: the local listener's, when already read; else read from the data volume.
+    release: the git tag Dockyard was built from; empty outside a release."""
     clock = clock or SystemClock()
     database = Database(settings.data_dir / "dockyard.db")
     database.migrate()
@@ -143,6 +145,7 @@ def create_instance(
             upkeep,
             activation_links,
             passwords=local_sign_in if settings.local else None,
+            release=release,
         )
         listeners[ListenerName.TUNNEL] = Listener(
             tunnel, settings.listen_host, settings.listen_port
@@ -162,6 +165,7 @@ def create_instance(
             clients=ClientNetworks(admitted=settings.local.networks, refused=runtime.networks()),
             passwords=local_sign_in,
             local_sign_in=local_sign_in,
+            release=release,
         )
         listeners[ListenerName.LOCAL] = Listener(
             local,
@@ -212,8 +216,9 @@ def _listener_app(
     clients: ClientNetworks | None = None,
     passwords: LocalSignIn | None = None,  # Users manage their password with it; None: it is off
     local_sign_in: LocalSignIn | None = None,  # people sign in on this listener with it
+    release: str = "",
 ) -> FastAPI:
-    pages = Pages(local_sign_in=local_sign_in is not None)
+    pages = Pages(local_sign_in=local_sign_in is not None, release=release)
     app = FastAPI(
         title="Dockyard",
         docs_url=None,

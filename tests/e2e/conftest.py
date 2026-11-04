@@ -16,7 +16,7 @@ from pathlib import Path
 import pytest
 import uvicorn
 from cryptography.fernet import Fernet
-from playwright.sync_api import Browser, BrowserContext, Page
+from playwright.sync_api import Browser, BrowserContext, Page, ViewportSize
 
 from dockyard.runtime.fake import FakeRuntime
 from dockyard.settings import Settings
@@ -24,7 +24,7 @@ from dockyard.web import create_app
 
 ADMINISTRATOR = "first.administrator@dockyard.example.com"
 DEV_HEADER = "X-Dockyard-Dev-Email"
-PHONE = {"width": 375, "height": 740}
+PHONE: ViewportSize = {"width": 375, "height": 740}
 PUBLIC_REPOSITORY = "https://github.com/octocat/Hello-World"
 
 
@@ -79,7 +79,7 @@ def open_as(browser: Browser, dockyard_url: str) -> Iterator[OpenAs]:
     """A fresh browser session for a person the authentication proxy has verified."""
     contexts: list[BrowserContext] = []
 
-    def open_as(email: str | None, *, viewport: dict[str, int] | None = None) -> Page:
+    def open_as(email: str | None, *, viewport: ViewportSize | None = None) -> Page:
         """email=None: someone who reached Dockyard without going through the proxy."""
         context = browser.new_context(
             base_url=dockyard_url,

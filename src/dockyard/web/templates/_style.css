@@ -27,6 +27,8 @@ body {
 .topbar button { background: transparent; color: var(--ink); }
 .brand { display: flex; align-items: center; }
 .brand img { display: block; height: 24px; width: auto; }
+.brand-line { display: flex; align-items: center; gap: 8px; }
+.release { color: var(--accent); font-size: 12px; }
 .who { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; min-width: 0; }
 .badge {
   font-size: 12px; padding: 1px 8px; border-radius: 99px;
