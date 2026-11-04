@@ -11,8 +11,9 @@ from .i18n import LANGUAGE_NAMES, language_for, translator
 
 
 class Pages:
-    def __init__(self, *, local_sign_in: bool = False) -> None:
+    def __init__(self, *, local_sign_in: bool = False, release: str = "") -> None:
         self._local_sign_in = local_sign_in  # the pages of the local listener
+        self._release = release or "dev"  # shown beside the logo; dev outside a release
         self._env = Environment(
             loader=PackageLoader("dockyard.web", "templates"),
             autoescape=select_autoescape(),
@@ -29,6 +30,7 @@ class Pages:
             languages=LANGUAGE_NAMES,
             path=conn.url.path,
             local_sign_in=self._local_sign_in,
+            release=self._release,
             **context,
         )
         return HTMLResponse(html, status_code=status_code)

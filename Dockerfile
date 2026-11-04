@@ -11,6 +11,10 @@ FROM python:3.13-slim
 RUN useradd --create-home --uid 10001 dockyard \
     && mkdir /data && chown dockyard:dockyard /data
 COPY --from=build /app/.venv /app/.venv
+# The git tag of the release, shown beside the logo: the Release workflow gives it. Empty in any
+# other build, which Dockyard shows as dev.
+ARG DOCKYARD_RELEASE=""
+ENV DOCKYARD_RELEASE=$DOCKYARD_RELEASE
 ENV PATH="/app/.venv/bin:$PATH" \
     PYTHONUNBUFFERED=1 \
     DOCKYARD_DATA_DIR=/data \

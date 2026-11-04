@@ -112,7 +112,7 @@ def test_the_sign_in_page_fits_a_phone_screen(
         base_url=local_url,
         ignore_https_errors=True,
         locale="en-US",
-        viewport=PHONE,  # type: ignore[arg-type]
+        viewport=PHONE,
     )
     page = context.new_page()
     page.goto("/sign-in")
@@ -191,13 +191,13 @@ def test_the_activation_page_fits_a_phone_screen(
         base_url=local_url,
         ignore_https_errors=True,
         locale="en-US",
-        viewport=PHONE,  # type: ignore[arg-type]
+        viewport=PHONE,
         permissions=["clipboard-read", "clipboard-write"],
     )
     person = browser.new_context(
         ignore_https_errors=True,
         locale="en-US",
-        viewport=PHONE,  # type: ignore[arg-type]
+        viewport=PHONE,
     )
     try:
         page = administrator.new_page()
@@ -232,7 +232,7 @@ def test_a_user_changes_their_password_from_their_page_on_a_phone(
         base_url=local_url,
         ignore_https_errors=True,
         locale="en-US",
-        viewport=PHONE,  # type: ignore[arg-type]
+        viewport=PHONE,
     )
     page = context.new_page()
     try:
@@ -260,7 +260,7 @@ def test_a_user_turns_on_the_second_factor_and_signs_in_again_with_a_code_on_a_p
         base_url=local_url,
         ignore_https_errors=True,
         locale="en-US",
-        viewport=PHONE,  # type: ignore[arg-type]
+        viewport=PHONE,
     )
     page = context.new_page()
     try:
@@ -304,7 +304,7 @@ def test_an_administrator_removes_a_users_second_factor_on_a_phone(
         base_url=local_url,
         ignore_https_errors=True,
         locale="en-US",
-        viewport=PHONE,  # type: ignore[arg-type]
+        viewport=PHONE,
         permissions=["clipboard-read", "clipboard-write"],
     )
     person = browser.new_context(ignore_https_errors=True, locale="en-US")

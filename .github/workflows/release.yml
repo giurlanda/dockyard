@@ -114,5 +114,9 @@ jobs:
           platforms: linux/amd64,linux/arm64
           pull: true
           push: true
+          # The tag Dockyard shows beside its logo: see its Dockerfile.
+          build-args: >-
+            ${{ matrix.name == 'dockyard'
+            && format('DOCKYARD_RELEASE={0}', needs.release.outputs.tag) || '' }}
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}

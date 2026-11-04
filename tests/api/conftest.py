@@ -134,18 +134,20 @@ def start_instance(
     configuration plus overrides.
 
     An override of None removes that setting. Every start shares the same data, Runtime, clock
-    and secret key: it is the same Instance.
+    and secret key: it is the same Instance. release: the git tag Dockyard was built from, if any.
     """
     secret_key = Fernet.generate_key().decode()
 
-    def start(**overrides: str | None) -> Instance:
+    def start(*, release: str = "", **overrides: str | None) -> Instance:
         env = instance_env(tmp_path, secret_key)
         for name, value in overrides.items():
             if value is None:
                 env.pop(name, None)
             else:
                 env[name] = value
-        return create_instance(Settings.from_env(env), runtime, signing_keys=proxy, clock=clock)
+        return create_instance(
+            Settings.from_env(env), runtime, signing_keys=proxy, clock=clock, release=release
+        )
 
     return start
 
@@ -164,8 +166,8 @@ def listener_client(
 def start_dockyard(start_instance: Callable[..., Instance]) -> Callable[..., TestClient]:
     """Start Dockyard as reached through the tunnel (see start_instance for the overrides)."""
 
-    def start(**overrides: str | None) -> TestClient:
-        return listener_client(start_instance(**overrides), ListenerName.TUNNEL)
+    def start(*, release: str = "", **overrides: str | None) -> TestClient:
+        return listener_client(start_instance(release=release, **overrides), ListenerName.TUNNEL)
 
     return start
 

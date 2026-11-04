@@ -12,7 +12,10 @@
 </head>
 <body>
 <header class="topbar">
-  <a class="brand" href="/" aria-label="Dockyard"><img src="/static/icons/logo.png" alt="Dockyard" width="180" height="24"></a>
+  <div class="brand-line">
+    <a class="brand" href="/" aria-label="Dockyard"><img src="/static/icons/logo.png" alt="Dockyard" width="180" height="24"></a>
+    {% if user is defined %}<span class="release" data-testid="release">{{ release }}</span>{% endif %}
+  </div>
   {% block header %}{% endblock %}
 </header>
 <main>
