@@ -16,26 +16,34 @@
   </section>
   <section class="panel">
     {% if live %}
-      <div class="terminal" data-terminal="/ws/projects/{{ project.id }}/terminal"
-           role="region" aria-label="{{ t('terminal.terminal') }}"></div>
-      <div class="keys" role="toolbar" aria-label="{{ t('terminal.keys') }}">
-        <button type="button" data-terminal-key="escape">Esc</button>
-        <button type="button" data-terminal-key="tab">Tab</button>
-        <button type="button" data-terminal-key="ctrl-c">Ctrl+C</button>
-        <button type="button" data-terminal-key="up" aria-label="{{ t('terminal.key_up') }}">↑</button>
-        <button type="button" data-terminal-key="down" aria-label="{{ t('terminal.key_down') }}">↓</button>
-      </div>
-      <form class="code" data-terminal-send>
-        <label for="command">{{ t("terminal.command") }}</label>
-        <div class="code-row">
-          <input id="command" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false">
-          <button class="primary">{{ t("terminal.send") }}</button>
+      <div class="terminal-area" data-terminal-area>
+        <div class="terminal-bar">
+          <button type="button" data-terminal-maximize
+                  data-maximize="{{ t('terminal.maximize') }}" data-restore="{{ t('terminal.restore') }}">
+            {{- t("terminal.maximize") -}}
+          </button>
         </div>
-        <p class="hint muted">{{ t("terminal.command_hint") }}</p>
-      </form>
-      {% set ended = "terminal.ended" %}
-      {% set lost = "terminal.lost" %}
-      {% include "_stream_outcomes.html" %}
+        <div class="terminal" data-terminal="/ws/projects/{{ project.id }}/terminal"
+             role="region" aria-label="{{ t('terminal.terminal') }}"></div>
+        <div class="keys" role="toolbar" aria-label="{{ t('terminal.keys') }}">
+          <button type="button" data-terminal-key="escape">Esc</button>
+          <button type="button" data-terminal-key="tab">Tab</button>
+          <button type="button" data-terminal-key="ctrl-c">Ctrl+C</button>
+          <button type="button" data-terminal-key="up" aria-label="{{ t('terminal.key_up') }}">↑</button>
+          <button type="button" data-terminal-key="down" aria-label="{{ t('terminal.key_down') }}">↓</button>
+        </div>
+        <form class="code" data-terminal-send>
+          <label for="command">{{ t("terminal.command") }}</label>
+          <div class="code-row">
+            <input id="command" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false">
+            <button class="primary">{{ t("terminal.send") }}</button>
+          </div>
+          <p class="hint muted">{{ t("terminal.command_hint") }}</p>
+        </form>
+        {% set ended = "terminal.ended" %}
+        {% set lost = "terminal.lost" %}
+        {% include "_stream_outcomes.html" %}
+      </div>
     {% else %}
       <p class="warning">{{ t("stream.not_running") }}</p>
       {% if project.status == "stopped" %}

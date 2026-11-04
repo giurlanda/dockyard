@@ -132,6 +132,8 @@
   "terminal.keys": "Keys",
   "terminal.key_up": "Arrow up",
   "terminal.key_down": "Arrow down",
+  "terminal.maximize": "Maximize",
+  "terminal.restore": "Restore",
   "terminal.command": "Command",
   "terminal.command_hint": "Sent followed by Enter, handy on a phone; leave it empty to press Enter alone.",
   "terminal.send": "Send",

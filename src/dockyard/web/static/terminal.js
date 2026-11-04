@@ -5,6 +5,9 @@
 //   <form data-terminal-send><input>...</form>  sends the input's value, then Enter
 //   <button data-terminal-key="escape">          sends a key a phone keyboard lacks: escape, tab,
 //                                                ctrl-c, up, down
+//   <div data-terminal-area>...<button data-terminal-maximize data-maximize data-restore>
+//                                                the button makes the area fill the window, then
+//                                                restores it; it shows the label for what it does
 //
 // When the socket closes, the terminal element dispatches "terminal-closed" (detail: {code}).
 // Leaving the page closes the socket: Dockyard stops following what it showed.
@@ -65,6 +68,14 @@
       send({ type: "input", data: keys[button.dataset.terminalKey]() });
     });
   }
+
+  // The terminal follows the area's size through the ResizeObserver above.
+  const area = document.querySelector("[data-terminal-area]");
+  const maximize = document.querySelector("[data-terminal-maximize]");
+  maximize?.addEventListener("click", () => {
+    const maximized = area.classList.toggle("maximized");
+    maximize.textContent = maximized ? maximize.dataset.restore : maximize.dataset.maximize;
+  });
 
   for (const form of document.querySelectorAll("[data-terminal-send]")) {
     form.addEventListener("submit", (event) => {
