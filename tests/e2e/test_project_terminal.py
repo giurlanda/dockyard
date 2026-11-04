@@ -10,6 +10,8 @@ from dockyard.runtime.fake import FakeRuntime
 from .conftest import ADMINISTRATOR, PHONE, OpenAs, fits_the_screen
 from .test_project_following import eventually, running_project
 
+SIZE = re.compile(r"\$ stty size\s*(\d+) (\d+)")
+
 
 def shell_ready(page: Page) -> None:
     expect(page.locator("[data-terminal]")).to_contain_text("$")
@@ -35,6 +37,74 @@ def test_a_user_opens_a_terminal_from_the_project_and_types_in_it(
 
     expect(terminal).to_contain_text(printed_by_pwd(project))
     expect(page.get_by_text("Leaving this page closes the shell")).to_be_visible()
+
+
+def shell_size(page: Page) -> tuple[int, int]:
+    """What `stty size` prints, the rows and columns the shell is told it has."""
+
+    def printed() -> list[tuple[str, str]]:
+        return SIZE.findall(page.locator("[data-terminal]").inner_text())
+
+    before = len(printed())
+    page.get_by_label("Command", exact=True).fill("stty size")
+    page.get_by_role("button", name="Send").click()
+    assert eventually(lambda: len(printed()) > before)
+    rows, cols = printed()[-1]
+    return int(rows), int(cols)
+
+
+def test_a_user_maximizes_the_terminal_to_the_window_and_restores_it(open_as: OpenAs) -> None:
+    page = open_as(ADMINISTRATOR)
+    project = running_project(page)
+    page.goto(f"/projects/{project}/terminal")
+    shell_ready(page)
+    rows, cols = shell_size(page)
+
+    page.get_by_role("button", name="Maximize").click()
+
+    window = page.viewport_size
+    assert window is not None
+    terminal = page.get_by_role("region", name="Terminal of the Project").bounding_box()
+    assert terminal is not None
+    assert terminal["width"] > 0.9 * window["width"]
+    assert terminal["height"] > 0.6 * window["height"]
+    bigger_rows, bigger_cols = shell_size(page)
+    assert bigger_rows > rows
+    assert bigger_cols > cols
+    page.locator("[data-terminal]").click()
+    page.keyboard.type("pwd")
+    page.keyboard.press("Enter")
+    expect(page.locator("[data-terminal]")).to_contain_text(printed_by_pwd(project))
+
+    page.get_by_role("button", name="Restore").click()
+
+    assert shell_size(page) == (rows, cols)
+    expect(page.get_by_role("button", name="Maximize")).to_be_visible()
+
+
+def test_on_a_phone_the_terminal_cannot_be_maximized(open_as: OpenAs) -> None:
+    page = open_as(ADMINISTRATOR, viewport=PHONE)
+    project = running_project(page)
+
+    page.goto(f"/projects/{project}/terminal")
+    shell_ready(page)
+
+    expect(page.get_by_role("button", name="Maximize")).to_be_hidden()
+
+
+def test_a_terminal_maximized_in_a_window_narrowed_to_a_phone_can_still_be_restored(
+    open_as: OpenAs,
+) -> None:
+    page = open_as(ADMINISTRATOR)
+    project = running_project(page)
+    page.goto(f"/projects/{project}/terminal")
+    shell_ready(page)
+    page.get_by_role("button", name="Maximize").click()
+
+    page.set_viewport_size(PHONE)
+    page.get_by_role("button", name="Restore").click()
+
+    expect(page.get_by_role("button", name="Maximize")).to_be_hidden()
 
 
 def test_leaving_the_terminal_ends_its_shell(open_as: OpenAs, runtime: FakeRuntime) -> None:

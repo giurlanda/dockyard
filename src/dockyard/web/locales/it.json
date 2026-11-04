@@ -132,6 +132,8 @@
   "terminal.keys": "Tasti",
   "terminal.key_up": "Freccia su",
   "terminal.key_down": "Freccia giù",
+  "terminal.maximize": "Massimizza",
+  "terminal.restore": "Ripristina",
   "terminal.command": "Comando",
   "terminal.command_hint": "Viene inviato seguito da Invio, comodo dal telefono; lascialo vuoto per premere solo Invio.",
   "terminal.send": "Invia",
